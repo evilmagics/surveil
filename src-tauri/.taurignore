@@ -1,6 +1,6 @@
-surveil_core.sqlite3
-surveil_core.sqlite3-journal
-surveil_core.sqlite3-wal
-surveil_core.sqlite3-shm
+surveil.sqlite3
+surveil.sqlite3-journal
+surveil.sqlite3-wal
+surveil.sqlite3-shm
 *.sqlite3
 *.db

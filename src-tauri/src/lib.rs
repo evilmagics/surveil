@@ -14,7 +14,7 @@ use transport::websocket::start_websocket_server;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt::init();  
-    let db_conn = init_db("surveil_core.sqlite3");  
+    let db_conn = init_db("surveil.sqlite3");  
     let streams_app = Arc::new(AsyncMutex::new(HashMap::new()));
     let streams_ws = Arc::clone(&streams_app);
 

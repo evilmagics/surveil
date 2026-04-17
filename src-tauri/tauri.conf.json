@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "surveil-core",
+  "productName": "surveil",
   "version": "0.1.0",
-  "identifier": "com.administrator_miy.surveil-core",
+  "identifier": "com.administrator_miy.surveil",
   "build": {
     "beforeDevCommand": "bun run dev",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "surveil-core",
+        "title": "surveil",
         "width": 800,
         "height": 600,
         "dragDropEnabled": false
