@@ -26,3 +26,5 @@ dist-ssr
 proposal/
 temp/
 .context/
+
+.env
