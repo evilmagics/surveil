@@ -2,67 +2,15 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
     Video, Plus, Search, Filter, Trash2, Edit, RefreshCw,
     Wifi, WifiOff, AlertCircle, PlayCircle, Loader2, Info, ChevronLeft, ChevronRight, X,
-    Maximize, Settings, Moon, Sun, Monitor, Type, Link as LinkIcon, Tags, Columns, List, LayoutGrid
+    Maximize, Settings, Moon, Sun, Monitor, Type, Link as LinkIcon, Tags, Columns, List, LayoutGrid, Activity, Camera, FileUp, FileDown
 } from 'lucide-react';
 
-// --- MOCK TAURI BACKEND ---
-// In a real Tauri app, this would call `window.__TAURI__.invoke(...)`
-const mockDb = {
-    cameras: Array.from({ length: 12 }).map((_, i) => ({
-        id: i + 1,
-        name: `Camera Area ${i + 1}`,
-        url: i % 2 === 0 ? `rtsp://192.168.1.${10 + i}:554/stream` : `http://192.168.1.${10 + i}:8080/video`,
-        labels: i % 3 === 0 ? ['Outdoor', 'Gate'] : ['Indoor', 'Corridor'],
-        status: i === 3 ? 'disconnected' : 'connected',
-        resolution: '1920x1080',
-        fps: 30,
-        codec: i % 2 === 0 ? 'H264' : 'MJPEG',
-        protocol: i % 2 === 0 ? 'RTSP' : 'HTTP',
-    }))
-};
+import { invoke } from '@tauri-apps/api/core';
+import { save } from '@tauri-apps/plugin-dialog';
+import { writeTextFile } from '@tauri-apps/plugin-fs';
 
 const invokeTauri = async (command, args = {}) => {
-    return new Promise((resolve, reject) => {
-        setTimeout(() => {
-            switch (command) {
-                case 'get_cameras':
-                    resolve([...mockDb.cameras].reverse());
-                    break;
-                case 'check_connection':
-                    if (args.url.includes('error')) reject("Connection failed or timed out");
-                    else resolve({
-                        resolution: args.url.includes('1080') ? '1920x1080' : '1280x720',
-                        fps: 30,
-                        codec: args.url.startsWith('rtsp') ? 'H265' : 'MJPEG',
-                        protocol: args.url.startsWith('rtsp') ? 'RTSP' : 'HTTP',
-                        status: 'connected'
-                    });
-                    break;
-                case 'add_camera':
-                    const newCam = { id: Date.now(), ...args.camera, status: 'connected' };
-                    mockDb.cameras.push(newCam);
-                    resolve(newCam);
-                    break;
-                case 'update_camera':
-                    const index = mockDb.cameras.findIndex(c => c.id === args.id);
-                    if (index !== -1) {
-                        mockDb.cameras[index] = { ...mockDb.cameras[index], ...args.camera };
-                        resolve(mockDb.cameras[index]);
-                    } else reject("Camera not found");
-                    break;
-                case 'delete_camera':
-                    mockDb.cameras = mockDb.cameras.filter(c => c.id !== args.id);
-                    resolve(true);
-                    break;
-                case 'update_camera_state':
-                    // Simulate saving state to database
-                    resolve(true);
-                    break;
-                default:
-                    reject("Unknown command");
-            }
-        }, 600); // Simulate network/DB delay
-    });
+    return await invoke(command, args);
 };
 
 // --- SHADCN UI REPLICA COMPONENTS ---
@@ -90,7 +38,7 @@ const Button = ({ children, variant = 'default', size = 'default', className = '
 const Input = React.forwardRef(({ className = '', ...props }, ref) => (
     <input
         ref={ref}
-        className={`flex h-9 w-full rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-zinc-500 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-zinc-400 dark:focus-visible:ring-zinc-300 disabled:cursor-not-allowed disabled:opacity-50 text-zinc-900 dark:text-zinc-100 ${className}`}
+        className={`flex h-9 w-full rounded-md border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 px-3 py-1 text-sm shadow-sm transition-colors placeholder:text-zinc-500 focus:outline-none focus:border-zinc-400 dark:focus:border-zinc-600 disabled:cursor-not-allowed disabled:opacity-50 text-zinc-900 dark:text-zinc-100 ${className}`}
         {...props}
     />
 ));
@@ -187,6 +135,100 @@ const SmartLabelInput = ({ labels = [], onChange }) => {
     );
 };
 
+// --- LIVE STREAM CANVAS COMPONENT ---
+const LiveStreamCanvas = ({ camera, className, fpsLimit = 15, onTimeout }) => {
+    const canvasRef = useRef(null);
+    const timeoutRef = useRef(null);
+
+    useEffect(() => {
+        let ws = null;
+        let isActive = true;
+        let animationFrameId;
+
+        const resetTimeout = () => {
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+            timeoutRef.current = setTimeout(() => {
+                if (isActive) {
+                    console.log(`Stream timeout for camera ${camera.id}`);
+                    if (ws) ws.close();
+                    if (onTimeout) onTimeout();
+                }
+            }, 5000); // 5 seconds without frame = timeout
+        };
+
+        const startStream = async () => {
+            try {
+                await invokeTauri('start_camera_stream', { cameraUrl: camera.url, cameraId: camera.id, fpsLimit }).catch(() => {});
+                
+                if (!isActive) return;
+
+                ws = new WebSocket('ws://127.0.0.1:8080');
+                ws.binaryType = 'arraybuffer';
+                
+                let pendingBitmap = null;
+                const draw = () => {
+                    animationFrameId = null;
+                    if (!isActive || !canvasRef.current || !pendingBitmap) {
+                         if (pendingBitmap) { pendingBitmap.close(); pendingBitmap = null; }
+                         return;
+                    }
+                    
+                    const ctx = canvasRef.current.getContext('2d', { alpha: false });
+                    ctx.drawImage(pendingBitmap, 0, 0, canvasRef.current.width, canvasRef.current.height);
+                    pendingBitmap.close();
+                    pendingBitmap = null;
+                };
+
+                ws.onopen = () => {
+                    ws.send(`cam_id:${camera.id}`);
+                    resetTimeout();
+                };
+
+                ws.onmessage = async (event) => {
+                    resetTimeout();
+                    if(typeof event.data === 'string') return;
+                    try {
+                        const blob = new Blob([event.data], { type: 'image/jpeg' });
+                        const bitmap = await window.createImageBitmap(blob);
+                        
+                        if(!isActive || !canvasRef.current) {
+                            bitmap.close();
+                            return;
+                        }
+
+                        if (pendingBitmap) pendingBitmap.close();
+                        pendingBitmap = bitmap;
+
+                        if (!animationFrameId) {
+                            animationFrameId = window.requestAnimationFrame(draw);
+                        }
+                    } catch(e) {}
+                };
+            } catch (e) {
+                console.error("Stream initialization error:", e);
+            }
+        };
+        
+        startStream();
+
+        return () => {
+            isActive = false;
+            if (ws) ws.close();
+            if (animationFrameId) window.cancelAnimationFrame(animationFrameId);
+            if (timeoutRef.current) clearTimeout(timeoutRef.current);
+        };
+    }, [camera.url, camera.id]);
+
+    return (
+        <canvas 
+            ref={canvasRef} 
+            className={className} 
+            width={1280} 
+            height={720} 
+        />
+    );
+};
+
 // --- CAMERA CARD COMPONENT ---
 const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate, onDetail, prefs, onTheater }) => {
     const [status, setStatus] = useState(camera.status);
@@ -244,15 +286,13 @@ const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate, onDeta
             <div ref={videoRef} className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
                 {status === 'connected' ? (
                     <>
-                        {camera.protocol === 'HTTP' ? (
-                            <img src={`https://picsum.photos/seed/${camera.id}/640/360`} className="w-full h-full object-cover opacity-80" alt="stream mock" />
-                        ) : (
-                            <div className="flex flex-col items-center justify-center text-zinc-400 dark:text-zinc-600">
-                                <PlayCircle className="w-12 h-12 mb-2 opacity-50" />
-                                <span className="text-xs font-medium">RTSP Stream (Decoded)</span>
-                            </div>
-                        )}
-
+                        <LiveStreamCanvas camera={camera} fpsLimit={prefs.fpsLimit} className="w-full h-full object-cover opacity-90" onTimeout={() => {
+                            if (status !== 'disconnected') {
+                                setStatus('disconnected');
+                                onStateUpdate(camera.id, 'disconnected');
+                            }
+                        }} />
+                        
                         {/* Top Left Badges (REC & Protocol) */}
                         <div className="absolute top-1.5 left-1.5 flex items-center space-x-1 z-10">
                             <div className="inline-flex items-center rounded bg-black/60 backdrop-blur-md border border-zinc-800/50 text-emerald-400 px-1.5 py-0.5 text-[9px] font-bold tracking-wider shadow-sm">
@@ -266,33 +306,73 @@ const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate, onDeta
                             )}
                         </div>
                     </>
-                ) : status === 'reconnecting' ? (
-                    <div className="flex flex-col items-center text-yellow-500">
-                        <Loader2 className="w-8 h-8 animate-spin mb-2" />
-                        <span className="text-xs font-medium">Reconnecting ({retryCount}/5)...</span>
-                    </div>
                 ) : (
-                    <div className="flex flex-col items-center text-red-500">
-                        <WifiOff className="w-8 h-8 mb-2" />
-                        <span className="text-xs font-medium">Disconnected</span>
-                        {retryCount >= 5 && <span className="text-xs text-zinc-400 dark:text-zinc-500 mt-1 mb-2">Max retries reached</span>}
-                        <Button variant="outline" size="sm" className="mt-2 h-7 px-3 text-xs border-red-500/30 text-red-500 hover:bg-red-500/10 hover:text-red-400 dark:border-red-500/30 dark:hover:bg-red-500/20 bg-black/50" onClick={() => handleReconnect(true)} disabled={isReconnecting}>
-                            <RefreshCw className="w-3 h-3 mr-1.5" /> Reconnect
-                        </Button>
+                    <div className="flex flex-col items-center justify-center w-full h-full bg-zinc-950/90 backdrop-blur-md relative overflow-hidden">
+                        {/* Electric/Data Connection Animation Background */}
+                        <div className={`absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-1000 ${status === 'reconnecting' || status === 'connecting' ? 'opacity-30' : 'opacity-10'}`}>
+                            <svg className="w-full h-24" viewBox="0 0 200 50" preserveAspectRatio="none">
+                                <path className="animate-[dash_1.5s_linear_infinite]" stroke="url(#gradient)" strokeWidth="1" fill="none" strokeDasharray="10 5" strokeDashoffset="0" d="M 0 25 Q 50 5 100 25 T 200 25" />
+                                <defs>
+                                    <linearGradient id="gradient" x1="0%" y1="0%" x2="100%" y2="0%">
+                                        <stop offset="0%" stopColor={status === 'reconnecting' || status === 'connecting' ? "#3b82f6" : "#ef4444"} stopOpacity="0" />
+                                        <stop offset="50%" stopColor={status === 'reconnecting' || status === 'connecting' ? "#60a5fa" : "#f87171"} stopOpacity="1" />
+                                        <stop offset="100%" stopColor={status === 'reconnecting' || status === 'connecting' ? "#3b82f6" : "#ef4444"} stopOpacity="0" />
+                                    </linearGradient>
+                                </defs>
+                            </svg>
+                        </div>
+                        
+                        {/* Animated Grid lines */}
+                        <div className={`absolute inset-0 bg-[linear-gradient(rgba(59,130,246,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(59,130,246,0.1)_1px,transparent_1px)] bg-[size:20px_20px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_10%,transparent_100%)] opacity-20 ${status === 'reconnecting' || status === 'connecting' ? 'animate-pulse' : ''} transition-all duration-1000`}></div>
+
+                        {status === 'reconnecting' || status === 'connecting' ? (
+                            <>
+                                {/* Data Transfer Nodes */}
+                                <div className="flex items-center space-x-5 z-10 mb-4">
+                                    <div className="relative">
+                                        <Video className="w-6 h-6 text-zinc-400 opacity-50" />
+                                        <div className="absolute inset-0 border-2 border-blue-400 rounded-full animate-ping opacity-30"></div>
+                                    </div>
+                                    
+                                    {/* Moving dots */}
+                                    <div className="flex space-x-1.5 w-16 justify-center">
+                                        <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                                        <div className="w-1.5 h-1.5 bg-blue-300 rounded-full animate-bounce"></div>
+                                    </div>
+
+                                    <Monitor className="w-6 h-6 text-blue-500 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+                                </div>
+                                
+                                <div className="z-10 flex flex-col items-center">
+                                    <span className="text-xs font-bold text-blue-400 uppercase tracking-widest drop-shadow-md mb-1">{status === 'connecting' ? 'Establishing Context' : 'Restoring Signal'}</span>
+                                    {status === 'reconnecting' && <span className="text-[10px] text-blue-200/70 font-mono">Attempt {retryCount}/5</span>}
+                                </div>
+                            </>
+                        ) : (
+                            <div className="z-10 flex flex-col items-center text-red-500 bg-black/40 p-4 rounded-xl backdrop-blur-md border border-red-500/20">
+                                <WifiOff className="w-8 h-8 mb-2" />
+                                <span className="text-xs font-medium">Disconnected</span>
+                                {retryCount >= 5 && <span className="text-[10px] text-red-400 mt-1 mb-2">Max retries reached</span>}
+                                <Button variant="outline" size="sm" className="mt-2 h-7 px-3 text-xs border-red-500/30 text-red-500 hover:bg-red-500/10 hover:text-red-400 bg-black/50" onClick={() => handleReconnect(true)} disabled={isReconnecting}>
+                                    <RefreshCw className="w-3 h-3 mr-1.5" /> Reconnect
+                                </Button>
+                            </div>
+                        )}
                     </div>
                 )}
 
                 {/* Action Buttons Overlay (Top Right) */}
                 <div className="absolute top-1 right-1 flex items-center space-x-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                    <Button variant="ghost" size="icon" className="h-7 w-7 bg-transparent hover:bg-transparent dark:hover:bg-transparent text-white/80 hover:text-white border-none shadow-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] hover:scale-110 transition-transform" onClick={(e) => { e.stopPropagation(); onDetail(camera); }} title="Detail Source">
+                    <Button variant="ghost" size="icon" className="h-7 w-7 !bg-transparent text-white/80 hover:text-blue-500 border-none shadow-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] hover:scale-110 transition-transform" onClick={(e) => { e.stopPropagation(); onDetail(camera); }} title="Detail Source">
                         <Info className="w-4 h-4" />
                     </Button>
                     {!prefs.monitoringMode && (
                         <>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 bg-transparent hover:bg-transparent dark:hover:bg-transparent text-white/80 hover:text-blue-400 border-none shadow-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] hover:scale-110 transition-transform" onClick={(e) => { e.stopPropagation(); onEdit(camera); }} title="Edit Camera">
+                            <Button variant="ghost" size="icon" className="h-7 w-7 !bg-transparent text-white/80 hover:text-blue-500 border-none shadow-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] hover:scale-110 transition-transform" onClick={(e) => { e.stopPropagation(); onEdit(camera); }} title="Edit Camera">
                                 <Edit className="w-4 h-4" />
                             </Button>
-                            <Button variant="ghost" size="icon" className="h-7 w-7 bg-transparent hover:bg-transparent dark:hover:bg-transparent text-white/80 hover:text-red-400 border-none shadow-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] hover:scale-110 transition-transform" onClick={(e) => { e.stopPropagation(); onDelete(camera); }} title="Delete Camera">
+                            <Button variant="ghost" size="icon" className="h-7 w-7 !bg-transparent text-white/80 hover:text-blue-500 border-none shadow-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] hover:scale-110 transition-transform" onClick={(e) => { e.stopPropagation(); onDelete(camera); }} title="Delete Camera">
                                 <Trash2 className="w-4 h-4" />
                             </Button>
                         </>
@@ -301,10 +381,10 @@ const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate, onDeta
 
                 {/* Action Buttons Overlay (Bottom Right) - Fullscreen & Theater */}
                 <div className="absolute bottom-1 right-1 flex items-center space-x-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-                    <Button variant="ghost" size="icon" className="h-7 w-7 bg-transparent hover:bg-transparent dark:hover:bg-transparent text-white/80 hover:text-white border-none shadow-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] hover:scale-110 transition-transform" onClick={(e) => { e.stopPropagation(); onTheater(camera); }} title="Theater Mode">
+                    <Button variant="ghost" size="icon" className="h-7 w-7 !bg-transparent text-white/80 hover:text-blue-500 border-none shadow-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] hover:scale-110 transition-transform" onClick={(e) => { e.stopPropagation(); onTheater(camera); }} title="Theater Mode">
                         <Monitor className="w-4 h-4" />
                     </Button>
-                    <Button variant="ghost" size="icon" className="h-7 w-7 bg-transparent hover:bg-transparent dark:hover:bg-transparent text-white/80 hover:text-white border-none shadow-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] hover:scale-110 transition-transform" onClick={handleFullscreen} title="Fullscreen">
+                    <Button variant="ghost" size="icon" className="h-7 w-7 !bg-transparent text-white/80 hover:text-blue-500 border-none shadow-none drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] hover:scale-110 transition-transform" onClick={handleFullscreen} title="Fullscreen">
                         <Maximize className="w-4 h-4" />
                     </Button>
                 </div>
@@ -366,6 +446,11 @@ export default function App() {
     const [isLoading, setIsLoading] = useState(true);
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(1);
+    const [isAppStarting, setIsAppStarting] = useState(true);
+
+    // Filter & Sort state
+    const [sortConfig, setSortConfig] = useState({ key: 'created_at', dir: 'desc' });
+    const [filterProtocol, setFilterProtocol] = useState('All');
 
     // Modals state
     const [isAddModalOpen, setIsAddModalOpen] = useState(false);
@@ -378,6 +463,26 @@ export default function App() {
     const [formMetadata, setFormMetadata] = useState(null);
     const [isCheckingConn, setIsCheckingConn] = useState(false);
     const [connError, setConnError] = useState('');
+    const fileInputRef = useRef(null);
+    const [activeAddTab, setActiveAddTab] = useState('single');
+    const [isDragging, setIsDragging] = useState(false);
+    const [isBatchLoading, setIsBatchLoading] = useState(false);
+    const [batchPreview, setBatchPreview] = useState([]);
+    const [batchResults, setBatchResults] = useState(null);
+
+    const getHostAndPort = (urlString) => {
+        try {
+            const u = new URL(urlString);
+            return `${u.hostname}:${u.port || (u.protocol.startsWith('rtsp') ? '554' : '80')}`;
+        } catch {
+            return urlString;
+        }
+    };
+
+    const isDuplicate = (urlToCheck, currentId = null) => {
+        const target = getHostAndPort(urlToCheck);
+        return cameras.some(c => c.id !== currentId && getHostAndPort(c.url) === target);
+    };
 
     // Preferences & Detail State
     const [prefs, setPrefs] = useState({
@@ -387,12 +492,28 @@ export default function App() {
         theme: 'dark',
         columns: '3',
         itemsPerPage: 12,
-        monitoringMode: false
+        monitoringMode: false,
+        fpsLimit: 15
     });
     const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
     const [selectedCameraDetails, setSelectedCameraDetails] = useState(null);
     const [theaterCamera, setTheaterCamera] = useState(null);
     const [showMonitorToast, setShowMonitorToast] = useState(false);
+
+    // Apply Dark/Light mode class universally
+    useEffect(() => {
+        if (prefs.theme === 'dark') {
+            document.documentElement.classList.add('dark');
+        } else {
+            document.documentElement.classList.remove('dark');
+        }
+    }, [prefs.theme]);
+
+    useEffect(() => {
+        if (!isAppStarting) {
+            invokeTauri('save_preferences', { prefs }).catch(console.error);
+        }
+    }, [prefs, isAppStarting]);
 
     // Keyboard Shortcut Effect
     useEffect(() => {
@@ -425,12 +546,18 @@ export default function App() {
     const loadCameras = async () => {
         setIsLoading(true);
         try {
+            const dbPrefs = await invokeTauri('get_preferences');
+            if (dbPrefs) {
+                setPrefs(prev => ({ ...prev, ...dbPrefs }));
+                if (dbPrefs.theme === 'dark') document.documentElement.classList.add('dark');
+            }
             const data = await invokeTauri('get_cameras');
             setCameras(data);
         } catch (e) {
             console.error(e);
         } finally {
             setIsLoading(false);
+            if (isAppStarting) setTimeout(() => setIsAppStarting(false), 800);
         }
     };
 
@@ -440,11 +567,34 @@ export default function App() {
 
     const filteredCameras = useMemo(() => {
         const s = search.toLowerCase();
-        return cameras.filter(c =>
+        let result = cameras.filter(c =>
             c.name.toLowerCase().includes(s) ||
             c.labels.some(l => l.toLowerCase().includes(s))
         );
-    }, [cameras, search]);
+
+        if (filterProtocol !== 'All') {
+            result = result.filter(c => c.protocol && c.protocol.toUpperCase() === filterProtocol.toUpperCase());
+        }
+
+        result.sort((a, b) => {
+            let valA = a[sortConfig.key];
+            let valB = b[sortConfig.key];
+            
+            if (sortConfig.key === 'created_at') {
+                valA = valA ? new Date(valA).getTime() : 0;
+                valB = valB ? new Date(valB).getTime() : 0;
+            } else {
+                valA = valA?.toString().toLowerCase() || '';
+                valB = valB?.toString().toLowerCase() || '';
+            }
+
+            if (valA < valB) return sortConfig.dir === 'asc' ? -1 : 1;
+            if (valA > valB) return sortConfig.dir === 'asc' ? 1 : -1;
+            return 0;
+        });
+
+        return result;
+    }, [cameras, search, filterProtocol, sortConfig]);
 
     const paginatedCameras = useMemo(() => {
         const start = (page - 1) * prefs.itemsPerPage;
@@ -458,6 +608,8 @@ export default function App() {
         setFormData({ name: '', url: '', labels: [] });
         setFormMetadata(null);
         setConnError('');
+        setBatchPreview([]);
+        setBatchResults(null);
         setIsAddModalOpen(true);
     };
 
@@ -489,14 +641,27 @@ export default function App() {
     const handleSaveCamera = async () => {
         if (!formData.name || !formData.url) return;
 
-        // Auto check if metadata is missing
-        let finalMetadata = formMetadata;
-        if (!finalMetadata) {
-            try {
-                finalMetadata = await invokeTauri('check_connection', { url: formData.url });
-            } catch (e) {
-                setConnError("Connection failed, cannot save."); return;
-            }
+        if (isDuplicate(formData.url, editingCamera?.id)) {
+            setConnError("A camera with this IP/Host and Port is already registered.");
+            return;
+        }
+
+        // Always fetch latest metadata before saving/updating
+        setIsCheckingConn(true);
+        let finalMetadata = null;
+        try {
+            finalMetadata = await invokeTauri('check_connection', { url: formData.url });
+        } catch (e) {
+            console.warn("Auto-metadata fetch failed during save, using offline defaults:", e);
+            finalMetadata = {
+                status: "offline",
+                resolution: "Unknown",
+                codec: "Unknown",
+                fps: 0,
+                protocol: "Unknown"
+            };
+        } finally {
+            setIsCheckingConn(false);
         }
 
         const payload = {
@@ -516,6 +681,149 @@ export default function App() {
             loadCameras();
         } catch (e) {
             setConnError("Failed to save to database.");
+        }
+    };
+
+    const handleBatchImport = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        const ext = file.name.split('.').pop().toLowerCase();
+        if (ext !== 'json' && ext !== 'csv') {
+            setConnError("Invalid file type. Only JSON and CSV files are allowed.");
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            return;
+        }
+
+        setIsBatchLoading(true);
+        const reader = new FileReader();
+        reader.onload = async (event) => {
+            try {
+                const text = event.target.result;
+                let camerasToAdd = [];
+                if (ext === 'json') {
+                    const raw = JSON.parse(text);
+                    camerasToAdd = raw.map(c => ({
+                        name: c.name || "Unnamed Camera",
+                        url: c.url || "",
+                        labels: c.labels || [],
+                        status: "disconnected",
+                        resolution: "Unknown",
+                        codec: "Unknown",
+                        fps: 0,
+                        protocol: "Unknown"
+                    }));
+                } else if (ext === 'csv') {
+                    const lines = text.split('\n').filter(l => l.trim());
+                    const headers = lines[0].split(',').map(h => h.trim().toLowerCase());
+                    const nameIdx = headers.indexOf('name');
+                    const urlIdx = headers.indexOf('url');
+                    const labelsIdx = headers.indexOf('labels');
+                    
+                    if (nameIdx === -1 || urlIdx === -1) {
+                        setConnError("CSV must contain 'name' and 'url' headers.");
+                        setIsBatchLoading(false);
+                        return;
+                    }
+
+                    for (let i = 1; i < lines.length; i++) {
+                        const row = lines[i].split(/,(?=(?:(?:[^"]*"){2})*[^"]*$)/).map(item => item.trim().replace(/^"|"$/g, ''));
+                        const name = row[nameIdx];
+                        const url = row[urlIdx];
+                        let labels = [];
+                        if (labelsIdx !== -1 && row[labelsIdx]) {
+                            labels = row[labelsIdx].split(';').map(l => l.trim()).filter(l => l);
+                        }
+                        if (name && url) {
+                            camerasToAdd.push({ 
+                                name, url, labels, 
+                                status: "disconnected",
+                                resolution: "Unknown", 
+                                codec: "Unknown", 
+                                fps: 0, 
+                                protocol: "Unknown" 
+                            });
+                        }
+                    }
+                }
+                
+                // Set to preview instead of directly adding
+                setBatchPreview(camerasToAdd.map(c => ({
+                    ...c,
+                    isDuplicate: isDuplicate(c.url)
+                })));
+                setConnError("");
+            } catch (err) {
+                console.error("Batch parse failed", err);
+                setConnError("Failed to parse file. Ensure it's valid.");
+            } finally {
+                setIsBatchLoading(false);
+                if (fileInputRef.current) fileInputRef.current.value = "";
+            }
+        };
+        reader.readAsText(file);
+    };
+
+    const handleSaveBatch = async () => {
+        if (batchPreview.length === 0) return;
+        setIsBatchLoading(true);
+        let added = 0;
+        let skipped = 0;
+
+        try {
+            for (const cam of batchPreview) {
+                if (!cam.isDuplicate) {
+                    // Always check connection and fetch metadata for batch imports too
+                    let batchMetadata = {
+                        status: "offline",
+                        resolution: "Unknown",
+                        codec: "Unknown",
+                        fps: 0,
+                        protocol: "Unknown"
+                    };
+
+                    try {
+                        const meta = await invokeTauri('check_connection', { url: cam.url });
+                        batchMetadata = meta;
+                    } catch (e) {
+                        console.warn(`Batch metadata fetch failed for ${cam.name}:`, e);
+                    }
+
+                    const finalCam = { ...cam, ...batchMetadata };
+                    await invokeTauri('add_camera', { camera: finalCam });
+                    added++;
+                } else {
+                    skipped++;
+                }
+            }
+            await loadCameras();
+            setBatchResults({ added, skipped });
+            setBatchPreview([]);
+        } catch (e) {
+            setConnError(`Database Error: ${e.toString()}`);
+            console.error("Batch Import Failed:", e);
+        } finally {
+            setIsBatchLoading(false);
+        }
+    };
+
+    const handleDownloadTemplate = async (type = 'csv') => {
+        let content, filename;
+        if (type === 'json') {
+            content = JSON.stringify([
+                { name: "Main Gate", url: "rtsp://admin:pass@192.168.1.10:554/stream", labels: ["outdoor", "gate"] },
+                { name: "Lobby", url: "rtsp://admin:pass@192.168.1.11:554/stream", labels: ["indoor"] }
+            ], null, 4);
+            filename = "surveil_batch_template.json";
+        } else {
+            content = `name,url,labels\nMain Gate,rtsp://admin:pass@192.168.1.10:554/stream,"outdoor;gate"\nLobby,rtsp://admin:pass@192.168.1.11:554/stream,"indoor"`;
+            filename = "surveil_batch_template.csv";
+        }
+        
+        try {
+            await invokeTauri('save_template_file', { content, filename });
+        } catch (e) {
+            console.error("Failed to save template file:", e);
         }
     };
 
@@ -547,8 +855,21 @@ export default function App() {
         }
     };
 
+    // Startup loading screen
+    if (isAppStarting) {
+        return (
+            <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col items-center justify-center transition-colors duration-500">
+                <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center shadow-xl shadow-blue-900/30 animate-pulse mb-6">
+                    <Video className="w-8 h-8 text-white" />
+                </div>
+                <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white mb-2">Sur<span className="text-blue-500">veil</span></h1>
+                <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
+            </div>
+        );
+    }
+
     return (
-        <div className={prefs.theme === 'dark' ? 'dark' : ''}>
+        <>
             <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 font-sans selection:bg-blue-500/30 transition-colors duration-500 flex flex-col overflow-x-hidden">
 
                 {/* Animated Top Navbar */}
@@ -558,7 +879,7 @@ export default function App() {
                             <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-900/20">
                                 <Video className="w-5 h-5 text-white" />
                             </div>
-                            <h1 className="text-xl font-bold tracking-tight">Surveil<span className="text-blue-500">Core</span></h1>
+                            <h1 className="text-xl font-bold tracking-tight">Sur<span className="text-blue-500">veil</span></h1>
                         </div>
 
                         <div className="flex items-center space-x-4">
@@ -571,8 +892,12 @@ export default function App() {
                                     onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                                 />
                             </div>
-                            <Button onClick={handleOpenAdd} className="bg-blue-600 hover:bg-blue-700 text-white shadow-blue-900/20 border-none dark:hover:bg-blue-700">
-                                <Plus className="w-4 h-4 mr-2" /> Add Camera
+                            <input type="file" ref={fileInputRef} onChange={handleBatchImport} accept=".csv,.json" className="hidden" />
+                            <Button size="icon" onClick={handleOpenAdd} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800 shadow-sm" title="Add Camera">
+                                <div className="relative">
+                                    <Video className="w-5 h-5 text-zinc-900 dark:text-zinc-100" />
+                                    <Plus className="w-4 h-4 absolute -bottom-1.5 -right-1.5 text-blue-500" />
+                                </div>
                             </Button>
                             <div className="h-6 w-px bg-zinc-300 dark:bg-zinc-700 hidden sm:block"></div>
                             <Button variant="ghost" size="icon" className="hidden sm:flex text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100" onClick={() => setPrefs(p => ({ ...p, monitoringMode: true }))} title="Monitoring Mode">
@@ -602,9 +927,36 @@ export default function App() {
                             <h2 className="text-lg font-medium text-zinc-800 dark:text-zinc-200 whitespace-nowrap">
                                 Camera List <span className="text-zinc-500 text-sm font-normal ml-2">({filteredCameras.length} sources)</span>
                             </h2>
-                            <Button variant="outline" size="sm" className="hidden sm:flex">
-                                <Filter className="w-4 h-4 mr-2 text-zinc-500 dark:text-zinc-400" /> Filter
-                            </Button>
+                            <div className="flex items-center space-x-2">
+                                <select 
+                                    className="bg-transparent border border-zinc-200 dark:border-zinc-800 text-sm rounded-md px-2 py-1 outline-none focus:border-blue-500"
+                                    value={filterProtocol} 
+                                    onChange={(e) => setFilterProtocol(e.target.value)}
+                                    title="Filter by Protocol"
+                                >
+                                    <option value="All">All Protocols</option>
+                                    <option value="RTSP">RTSP</option>
+                                    <option value="HTTP">HTTP</option>
+                                </select>
+                                <div className="flex items-center space-x-1 bg-transparent border border-zinc-200 dark:border-zinc-800 rounded-md px-1 py-1">
+                                    <select 
+                                        className="bg-transparent text-sm border-none outline-none pr-1"
+                                        value={sortConfig.key} 
+                                        onChange={(e) => setSortConfig(c => ({...c, key: e.target.value}))}
+                                        title="Sort Field"
+                                    >
+                                        <option value="created_at">Date Added</option>
+                                        <option value="name">Name</option>
+                                    </select>
+                                    <button 
+                                        onClick={() => setSortConfig(c => ({...c, dir: c.dir === 'asc' ? 'desc' : 'asc'}))}
+                                        className="p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
+                                        title={sortConfig.dir === 'asc' ? 'Ascending' : 'Descending'}
+                                    >
+                                        {sortConfig.dir === 'asc' ? <ChevronLeft className="w-3.5 h-3.5 rotate-90" /> : <ChevronRight className="w-3.5 h-3.5 -rotate-90" />}
+                                    </button>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
@@ -634,7 +986,7 @@ export default function App() {
                             <Video className="w-12 h-12 mb-4 opacity-20" />
                             <p className="text-lg font-medium text-zinc-700 dark:text-zinc-300">No cameras found</p>
                             <p className="text-sm mt-1 mb-4 text-center max-w-md">Please add a new source or change your search keywords.</p>
-                            <Button onClick={handleOpenAdd} variant="secondary">Add First Source</Button>
+                            <Button onClick={handleOpenAdd} variant="secondary">Add Source</Button>
                         </div>
                     )}
 
@@ -661,7 +1013,7 @@ export default function App() {
                 {/* Animated Footer */}
                 <footer className={`transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden flex flex-col items-center justify-center ${prefs.monitoringMode ? 'h-0 opacity-0 py-0 border-t-0 border-transparent' : 'h-24 opacity-100 py-8 border-t border-zinc-200 dark:border-zinc-800/50 mt-auto'}`}>
                     <div className="container mx-auto px-4 flex flex-col items-center justify-center text-sm text-zinc-500 dark:text-zinc-400">
-                        <p className="mb-1">&copy; {new Date().getFullYear()} SurveilCore App.</p>
+                        <p className="mb-1">&copy; {new Date().getFullYear()} Surveil App.</p>
                         <p>
                             Project created by <a href="https://github.com/evilmagics" target="_blank" rel="noreferrer" className="text-blue-500 hover:text-blue-600 dark:hover:text-blue-400 font-medium transition-colors">@evilmagics</a>
                         </p>
@@ -673,60 +1025,201 @@ export default function App() {
                     open={isAddModalOpen}
                     onOpenChange={setIsAddModalOpen}
                     title={editingCamera ? "Edit Camera Configuration" : "Add New Camera"}
-                    description="Enter the HTTP or RTSP stream source details."
+                    description={editingCamera ? "Modify camera details" : "Add a single camera or import multiple."}
                     footer={
                         <>
-                            <Button variant="ghost" onClick={() => setIsAddModalOpen(false)}>Cancel</Button>
-                            <Button className="bg-blue-600 hover:bg-blue-700 text-white dark:hover:bg-blue-700" onClick={handleSaveCamera} disabled={!formData.name || !formData.url || isCheckingConn}>
-                                {isCheckingConn && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
-                                Save Configuration
-                            </Button>
+                            <Button variant="ghost" onClick={() => setIsAddModalOpen(false)}>{batchResults ? "Close" : "Cancel"}</Button>
+                            {(activeAddTab === 'single' || editingCamera) ? (
+                                <Button className="bg-blue-600 hover:bg-blue-700 text-white dark:hover:bg-blue-700" onClick={handleSaveCamera} disabled={!formData.name || !formData.url || isCheckingConn}>
+                                    {isCheckingConn && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                                    Save Configuration
+                                </Button>
+                            ) : (
+                                batchPreview.length > 0 && !batchResults && (
+                                    <Button className="bg-blue-600 hover:bg-blue-700 text-white dark:hover:bg-blue-700" onClick={handleSaveBatch} disabled={isBatchLoading}>
+                                        {isBatchLoading && <Loader2 className="w-4 h-4 mr-2 animate-spin" />}
+                                        Save {batchPreview.filter(p => !p.isDuplicate).length} Cameras
+                                    </Button>
+                                )
+                            )}
                         </>
                     }
                 >
-                    <div className="space-y-4 py-2">
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Camera Name <span className="text-red-500">*</span></label>
-                            <Input placeholder="Example: Front Parking Camera" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
+                    {!editingCamera && (
+                        <div className="flex w-full mb-4 bg-zinc-100 dark:bg-zinc-800/80 rounded-lg p-1">
+                            <button 
+                                className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${activeAddTab === 'single' ? 'bg-white dark:bg-zinc-700 shadow-sm text-zinc-900 dark:text-zinc-100' : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300'}`} 
+                                onClick={() => setActiveAddTab('single')}
+                            >
+                                Single Camera
+                            </button>
+                            <button 
+                                className={`flex-1 py-1.5 text-sm font-medium rounded-md transition-all ${activeAddTab === 'batch' ? 'bg-white dark:bg-zinc-700 shadow-sm text-zinc-900 dark:text-zinc-100' : 'text-zinc-500 hover:text-zinc-700 dark:text-zinc-400 dark:hover:text-zinc-300'}`} 
+                                onClick={() => setActiveAddTab('batch')}
+                            >
+                                Batch Import
+                            </button>
                         </div>
-
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Stream URL (HTTP / RTSP) <span className="text-red-500">*</span></label>
-                            <div className="flex space-x-2">
-                                <Input placeholder="rtsp://admin:pass@192.168.1.10:554/stream" value={formData.url} onChange={e => { setFormData({ ...formData, url: e.target.value }); setFormMetadata(null); }} className="flex-1" />
-                                <Button variant="secondary" onClick={handleCheckConnectionForm} disabled={!formData.url || isCheckingConn}>
-                                    {isCheckingConn ? <Loader2 className="w-4 h-4 animate-spin" /> : "Test Connection"}
-                                </Button>
+                    )}
+                    
+                    {activeAddTab === 'single' || editingCamera ? (
+                        <div className="space-y-4 py-2">
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Camera Name <span className="text-red-500">*</span></label>
+                                <Input placeholder="Example: Front Parking Camera" value={formData.name} onChange={e => setFormData({ ...formData, name: e.target.value })} />
                             </div>
-                            {connError && <p className="text-xs text-red-500 mt-1 flex items-center"><AlertCircle className="w-3 h-3 mr-1" /> {connError}</p>}
-                        </div>
 
-                        <div className="space-y-2">
-                            <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Labels (Press Enter or Comma)</label>
-                            <SmartLabelInput
-                                labels={formData.labels}
-                                onChange={(newLabels) => setFormData({ ...formData, labels: newLabels })}
-                            />
-                        </div>
-
-                        {/* Metadata Detector Display */}
-                        <div className="mt-4 p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800">
-                            <div className="flex items-center mb-2">
-                                <Info className="w-4 h-4 mr-2 text-blue-500 dark:text-blue-400" />
-                                <span className="text-sm font-medium text-zinc-900 dark:text-zinc-200">Auto Detected Metadata</span>
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Stream URL (HTTP / RTSP) <span className="text-red-500">*</span></label>
+                                <div className="flex space-x-2">
+                                    <Input placeholder="rtsp://admin:pass@192.168.1.10:554/stream" value={formData.url} onChange={e => { setFormData({ ...formData, url: e.target.value }); setFormMetadata(null); }} className="flex-1" />
+                                    <Button variant="secondary" onClick={handleCheckConnectionForm} disabled={!formData.url || isCheckingConn}>
+                                        {isCheckingConn ? <Loader2 className="w-4 h-4 animate-spin" /> : "Test Connection"}
+                                    </Button>
+                                </div>
+                                {connError && <p className="text-xs text-red-500 mt-1 flex items-center"><AlertCircle className="w-3 h-3 mr-1" /> {connError}</p>}
                             </div>
-                            {formMetadata ? (
-                                <div className="grid grid-cols-2 gap-2 mt-3 text-sm">
-                                    <div className="text-zinc-500 dark:text-zinc-400">Resolution: <span className="text-zinc-900 dark:text-zinc-100 font-mono ml-1">{formMetadata.resolution}</span></div>
-                                    <div className="text-zinc-500 dark:text-zinc-400">Codec: <span className="text-zinc-900 dark:text-zinc-100 font-mono ml-1">{formMetadata.codec}</span></div>
-                                    <div className="text-zinc-500 dark:text-zinc-400">FPS: <span className="text-zinc-900 dark:text-zinc-100 font-mono ml-1">{formMetadata.fps}</span></div>
-                                    <div className="text-zinc-500 dark:text-zinc-400">Protocol: <span className="text-zinc-900 dark:text-zinc-100 font-mono ml-1">{formMetadata.protocol}</span></div>
+
+                            <div className="space-y-2">
+                                <label className="text-sm font-medium text-zinc-700 dark:text-zinc-300">Labels (Press Enter or Comma)</label>
+                                <SmartLabelInput
+                                    labels={formData.labels}
+                                    onChange={(newLabels) => setFormData({ ...formData, labels: newLabels })}
+                                />
+                            </div>
+
+                            {/* Metadata Detector Display */}
+                            <div className="mt-4 p-4 rounded-lg bg-zinc-50 dark:bg-zinc-900/50 border border-zinc-200 dark:border-zinc-800">
+                                <div className="flex items-center mb-2">
+                                    <Info className="w-4 h-4 mr-2 text-blue-500 dark:text-blue-400" />
+                                    <span className="text-sm font-medium text-zinc-900 dark:text-zinc-200">Auto Detected Metadata</span>
+                                </div>
+                                {formMetadata ? (
+                                    <div className="grid grid-cols-2 gap-2 mt-3 text-sm">
+                                        <div className="text-zinc-500 dark:text-zinc-400">Resolution: <span className="text-zinc-900 dark:text-zinc-100 font-mono ml-1">{formMetadata.resolution}</span></div>
+                                        <div className="text-zinc-500 dark:text-zinc-400">Codec: <span className="text-zinc-900 dark:text-zinc-100 font-mono ml-1">{formMetadata.codec}</span></div>
+                                        <div className="text-zinc-500 dark:text-zinc-400">FPS: <span className="text-zinc-900 dark:text-zinc-100 font-mono ml-1">{formMetadata.fps}</span></div>
+                                        <div className="text-zinc-500 dark:text-zinc-400">Protocol: <span className="text-zinc-900 dark:text-zinc-100 font-mono ml-1">{formMetadata.protocol}</span></div>
+                                    </div>
+                                ) : (
+                                    <p className="text-xs text-zinc-500 mt-1">Click "Test Connection" to automatically fetch resolution, encoder type, and protocol.</p>
+                                )}
+                            </div>
+                        </div>
+                    ) : (
+                        <div className="flex flex-col items-center justify-center py-2 min-h-[300px]">
+                            {batchResults ? (
+                                <div className="flex flex-col items-center justify-center space-y-4 animate-in fade-in zoom-in duration-300 w-full py-8">
+                                    <div className="w-16 h-16 bg-emerald-500/10 rounded-full flex items-center justify-center border-2 border-emerald-500/20">
+                                        <Activity className="w-8 h-8 text-emerald-500" />
+                                    </div>
+                                    <div className="text-center">
+                                        <h4 className="text-lg font-bold text-zinc-900 dark:text-zinc-50">Batch Process Complete</h4>
+                                        <p className="text-sm text-zinc-500 dark:text-zinc-400 mt-1">Successfully synchronized cameras with database</p>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4 w-full max-w-sm mt-4">
+                                        <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 text-center">
+                                            <span className="text-2xl font-bold text-emerald-500">{batchResults.added}</span>
+                                            <p className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 mt-1">Added</p>
+                                        </div>
+                                        <div className="bg-zinc-50 dark:bg-zinc-900 p-4 rounded-xl border border-zinc-200 dark:border-zinc-800 text-center">
+                                            <span className="text-2xl font-bold text-amber-500">{batchResults.skipped}</span>
+                                            <p className="text-[10px] uppercase tracking-wider font-bold text-zinc-400 mt-1">Skipped</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            ) : batchPreview.length > 0 ? (
+                                <div className="w-full space-y-4 animate-in fade-in slide-in-from-bottom-2 duration-300">
+                                    <div className="flex items-center justify-between">
+                                        <h4 className="text-sm font-bold text-zinc-900 dark:text-zinc-50 uppercase tracking-widest">Import Preview</h4>
+                                        <button onClick={() => { setBatchPreview([]); setConnError(''); }} className="text-xs text-red-500 hover:underline">Clear</button>
+                                    </div>
+                                    <div className="max-h-64 overflow-y-auto bg-white dark:bg-zinc-900/50 rounded-xl divide-y divide-zinc-100 dark:divide-zinc-800/50">
+                                        {batchPreview.map((item, idx) => (
+                                            <div key={idx} className="p-3 flex items-center justify-between text-sm group">
+                                                <div className="flex-1 min-w-0 pr-4">
+                                                    <p className="font-semibold text-zinc-900 dark:text-zinc-100 truncate">{item.name}</p>
+                                                    <p className="text-xs text-zinc-500 dark:text-zinc-500 truncate">{item.url}</p>
+                                                </div>
+                                                <div>
+                                                    {item.isDuplicate ? (
+                                                        <Badge variant="warning" className="text-[9px]">Duplicate</Badge>
+                                                    ) : (
+                                                        <Badge variant="success" className="text-[9px]">Ready</Badge>
+                                                    )}
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                    <p className="text-xs text-zinc-500 text-center italic">Only "Ready" items will be added to the database.</p>
                                 </div>
                             ) : (
-                                <p className="text-xs text-zinc-500 mt-1">Click "Test Connection" to automatically fetch resolution, encoder type, and protocol.</p>
+                                <div 
+                                    className={`flex flex-col items-center justify-center p-12 mt-2 w-full rounded-2xl relative group overflow-hidden transition-all duration-300 ${isDragging ? 'bg-blue-50/80 dark:bg-blue-900/20 scale-[0.99] shadow-inner' : 'bg-zinc-50 dark:bg-zinc-900/50'}`}
+                                    onDragEnter={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
+                                    onDragOver={(e) => { e.preventDefault(); e.stopPropagation(); setIsDragging(true); }}
+                                    onDragLeave={(e) => { 
+                                        e.preventDefault(); 
+                                        e.stopPropagation(); 
+                                        if (!e.currentTarget.contains(e.relatedTarget)) {
+                                            setIsDragging(false); 
+                                        }
+                                    }}
+                                    onDrop={(e) => {
+                                        e.preventDefault();
+                                        e.stopPropagation();
+                                        setIsDragging(false);
+                                        if(e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+                                            handleBatchImport({ target: { files: e.dataTransfer.files } });
+                                        }
+                                    }}
+                                >
+                                    {isBatchLoading && (
+                                        <div className="absolute inset-0 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-[2px] z-20 flex flex-col items-center justify-center animate-in fade-in duration-300 pointer-events-none">
+                                            <Loader2 className="w-10 h-10 text-blue-500 animate-spin mb-3" />
+                                            <p className="text-sm font-bold text-zinc-900 dark:text-zinc-100 uppercase tracking-widest">Parsing File...</p>
+                                        </div>
+                                    )}
+
+                                    <div className={`p-4 shadow-md border rounded-full mb-4 transition-all duration-500 pointer-events-none ${isDragging ? 'bg-blue-600 border-blue-400 scale-110 shadow-blue-500/20' : 'bg-white dark:bg-zinc-900 border-zinc-200 dark:border-zinc-800'}`}>
+                                        <FileUp className={`w-8 h-8 transition-colors ${isDragging ? 'text-white' : 'text-blue-500 dark:text-blue-400'}`} />
+                                    </div>
+                                    <p className={`text-base font-bold transition-all pointer-events-none ${isDragging ? 'text-blue-600 dark:text-blue-400 translate-y-[-2px]' : 'text-zinc-900 dark:text-zinc-100'}`}>
+                                        {isDragging ? 'Ready to Import!' : 'Drag and drop file here'}
+                                    </p>
+                                    <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1 mb-6 text-center max-w-[200px] pointer-events-none">
+                                        Supports JSON and CSV template files
+                                    </p>
+                                    <Button size="sm" className={`transition-all ${isDragging ? 'opacity-0 scale-95 pointer-events-none' : 'bg-zinc-900 hover:bg-zinc-800 text-white dark:bg-zinc-100 dark:text-zinc-900 dark:hover:bg-white'}`} onClick={() => fileInputRef.current?.click()} disabled={isBatchLoading}>
+                                        Browse From Computer
+                                    </Button>
+                                    
+                                    {isDragging && <div className="absolute inset-0 border-4 border-blue-500/20 animate-pulse pointer-events-none"></div>}
+                                </div>
                             )}
+                            
+                            {!batchPreview.length && !batchResults && (
+                                <div className="flex flex-col items-center mt-4 w-full bg-zinc-50 dark:bg-zinc-900/50 p-3 rounded-lg border border-zinc-100 dark:border-zinc-800">
+                                    <p className="text-xs text-zinc-500 mb-2">Need a template file format?</p>
+                                    <div className="flex items-center space-x-3">
+                                        <button 
+                                            onClick={() => handleDownloadTemplate('csv')} 
+                                            className="text-xs font-semibold text-blue-600 dark:text-blue-400 hover:text-blue-700 dark:hover:text-blue-300 hover:underline transition-all flex items-center"
+                                        >
+                                            <FileDown className="w-3 h-3 mr-1" /> CSV Template
+                                        </button>
+                                        <button 
+                                            onClick={() => handleDownloadTemplate('json')} 
+                                            className="text-xs font-semibold text-green-600 dark:text-green-400 hover:text-green-700 dark:hover:text-green-300 hover:underline transition-all flex items-center"
+                                        >
+                                            <FileDown className="w-3 h-3 mr-1" /> JSON Template
+                                        </button>
+                                    </div>
+                                </div>
+                            )}
+                            {connError && <p className="text-xs text-red-500 mt-4 flex items-center"><AlertCircle className="w-3 h-3 mr-1" /> {connError}</p>}
                         </div>
-                    </div>
+                    )}
                 </Dialog>
 
                 {/* MODAL: DELETE CONFIRMATION */}
@@ -808,6 +1301,26 @@ export default function App() {
                                         <p className="font-medium text-sm text-zinc-900 dark:text-zinc-100 mt-1">{selectedCameraDetails.protocol}</p>
                                     </div>
                                 </div>
+                                <div className="border-t border-zinc-200 dark:border-zinc-800 pt-6 space-y-4">
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-zinc-500 uppercase tracking-widest font-medium">Created At</span>
+                                        <span className="text-zinc-400 font-mono uppercase">
+                                            {selectedCameraDetails.created_at ? new Date(selectedCameraDetails.created_at).toLocaleString('id-ID') : '-'}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-zinc-500 uppercase tracking-widest font-medium">Last Updated</span>
+                                        <span className="text-zinc-400 font-mono uppercase">
+                                            {selectedCameraDetails.updated_at ? new Date(selectedCameraDetails.updated_at).toLocaleString('id-ID') : '-'}
+                                        </span>
+                                    </div>
+                                    <div className="flex justify-between items-center text-xs">
+                                        <span className="text-zinc-500 uppercase tracking-widest font-medium">Last Seen</span>
+                                        <span className="text-zinc-400 font-mono uppercase">
+                                            {selectedCameraDetails.last_connected_at ? new Date(selectedCameraDetails.last_connected_at).toLocaleString('id-ID') : '-'}
+                                        </span>
+                                    </div>
+                                </div>
                                 {selectedCameraDetails.labels.length > 0 && (
                                     <div className="border-t border-zinc-200 dark:border-zinc-800 pt-6">
                                         <label className="text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider block mb-2">Labels (Tags)</label>
@@ -831,15 +1344,8 @@ export default function App() {
                         <div className="relative w-full max-w-5xl aspect-video bg-black rounded-2xl border border-zinc-800 shadow-2xl overflow-hidden group animate-in zoom-in-95 duration-500 ease-[cubic-bezier(0.16,1,0.3,1)]" onClick={e => e.stopPropagation()}>
 
                             {/* Stream Area */}
-                            <div className="absolute inset-0 flex items-center justify-center">
-                                {theaterCamera.protocol === 'HTTP' ? (
-                                    <img src={`https://picsum.photos/seed/${theaterCamera.id}/1920/1080`} className="w-full h-full object-cover" alt="stream mock" />
-                                ) : (
-                                    <div className="flex flex-col items-center justify-center text-zinc-600">
-                                        <PlayCircle className="w-16 h-16 mb-4 opacity-40" />
-                                        <span className="text-base font-medium text-zinc-500">RTSP Stream (Decoded)</span>
-                                    </div>
-                                )}
+                            <div className="absolute inset-0 flex items-center justify-center bg-black">
+                                <LiveStreamCanvas camera={theaterCamera} fpsLimit={prefs.fpsLimit} className="w-full h-full object-contain" />
                             </div>
 
                             {/* Status Badges Always Visible */}
@@ -847,10 +1353,15 @@ export default function App() {
                                 <Badge variant="success" className="bg-black/50 backdrop-blur-md border-zinc-800/50 text-emerald-400 px-2 py-1 shadow-md">
                                     <span className="w-2 h-2 rounded-full bg-emerald-500 mr-1.5 animate-pulse"></span> REC
                                 </Badge>
+                                {theaterCamera.status === 'connected' && (
+                                    <Badge variant="outline" className="bg-black/50 backdrop-blur-md border-emerald-500/30 text-emerald-300 px-2 py-1 shadow-md">
+                                        LIVE
+                                    </Badge>
+                                )}
                             </div>
 
                             {/* Gradient Bottom (For Text Readability) */}
-                            <div className="absolute bottom-0 inset-x-0 h-32 bg-gradient-to-t from-black/90 to-transparent pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
+                            <div className="absolute bottom-0 inset-x-0 h-40 bg-gradient-to-t from-black/90 via-black/40 to-transparent pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300"></div>
 
                             {/* Hover Overlay: Close Button (Top Right) */}
                             <button onClick={() => setTheaterCamera(null)} className="absolute top-4 right-4 z-50 text-white/70 hover:text-white p-2 rounded-full bg-black/40 hover:bg-black/60 backdrop-blur-md transition-all duration-300 opacity-0 group-hover:opacity-100 scale-95 hover:scale-100 border border-white/10">
@@ -858,13 +1369,32 @@ export default function App() {
                             </button>
 
                             {/* Hover Overlay: Camera Info (Bottom Left) */}
-                            <div className="absolute bottom-5 left-5 z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
-                                <h3 className="text-lg font-semibold text-white drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] flex items-center">
-                                    <Monitor className="w-4 h-4 mr-2 text-blue-400" /> {theaterCamera.name}
-                                </h3>
-                                <p className="text-xs text-zinc-300 font-mono mt-1 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)] flex items-center">
-                                    <LinkIcon className="w-3 h-3 mr-1.5 opacity-70" /> {theaterCamera.url}
-                                </p>
+                            <div className="absolute bottom-5 left-5 right-5 flex justify-between items-end z-50 opacity-0 group-hover:opacity-100 transition-opacity duration-300 pointer-events-none">
+                                <div>
+                                    <h3 className="text-xl font-bold text-white drop-shadow-md flex items-center">
+                                        <Monitor className="w-5 h-5 mr-2 text-blue-400" /> {theaterCamera.name}
+                                    </h3>
+                                    <p className="text-sm text-zinc-300 font-mono mt-1 drop-shadow-md flex items-center">
+                                        <LinkIcon className="w-3.5 h-3.5 mr-1.5 opacity-70" /> {theaterCamera.url}
+                                    </p>
+                                    {theaterCamera.labels?.length > 0 && (
+                                        <div className="flex space-x-1.5 mt-2">
+                                            {theaterCamera.labels.map((lbl, idx) => (
+                                                <span key={idx} className="bg-white/10 backdrop-blur-md border border-white/10 text-white/90 px-1.5 py-0.5 rounded text-[10px] font-medium tracking-wide">
+                                                    {lbl}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+                                <div className="flex flex-col items-end space-y-1.5">
+                                    <div className="flex items-center space-x-1.5 opacity-90">
+                                        <span className="bg-black/60 px-2 py-0.5 rounded border border-white/15 backdrop-blur-md text-xs text-zinc-100 font-mono shadow-sm">{theaterCamera.resolution}</span>
+                                        <span className="bg-black/60 px-2 py-0.5 rounded border border-white/15 backdrop-blur-md text-xs text-zinc-100 font-mono shadow-sm">{theaterCamera.fps} FPS</span>
+                                        <span className="bg-black/60 px-2 py-0.5 rounded border border-white/15 backdrop-blur-md text-xs text-zinc-100 font-mono shadow-sm">{theaterCamera.codec}</span>
+                                        <span className="bg-blue-600/80 px-2 py-0.5 rounded border border-blue-500/30 backdrop-blur-md text-xs text-white font-mono shadow-sm font-bold">{theaterCamera.protocol}</span>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -938,6 +1468,23 @@ export default function App() {
                                     {/* Category: Layout */}
                                     <div>
                                         <h4 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-3">Layout Settings</h4>
+
+                                        <div className="flex items-center justify-between py-1.5 mb-1.5">
+                                            <span className="text-sm text-zinc-600 dark:text-zinc-300 flex items-center">
+                                                <Activity className="w-4 h-4 mr-2.5 text-zinc-400" /> Max FPS
+                                            </span>
+                                            <select
+                                                className="bg-transparent text-sm border border-zinc-200 dark:border-zinc-700 rounded-md px-2 py-1 text-zinc-900 dark:text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500"
+                                                value={prefs.fpsLimit}
+                                                onChange={(e) => setPrefs(p => ({ ...p, fpsLimit: Number(e.target.value) }))}
+                                            >
+                                                <option value={10}>10 FPS</option>
+                                                <option value={15}>15 FPS</option>
+                                                <option value={20}>20 FPS</option>
+                                                <option value={30}>30 FPS</option>
+                                                <option value={60}>60 FPS</option>
+                                            </select>
+                                        </div>
 
                                         <div className="flex items-center justify-between py-1.5 mb-1.5">
                                             <span className="text-sm text-zinc-600 dark:text-zinc-300 flex items-center">
@@ -1019,7 +1566,7 @@ export default function App() {
                         )}
                         <Button
                             size="icon"
-                            className={`h-14 w-14 rounded-full shadow-lg transition-all duration-300 relative z-40 ${isPreferencesOpen ? 'rotate-90 bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-white' : 'bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-500/20 dark:text-blue-400 dark:hover:bg-blue-500/30'} border border-transparent dark:border-white/5 hover:scale-105`}
+                            className={`h-14 w-14 !rounded-full shadow-[0_8px_30px_rgb(0,0,0,0.12)] transition-all duration-300 relative z-40 ${isPreferencesOpen ? 'rotate-90 bg-zinc-200 text-zinc-900 dark:bg-zinc-800 dark:text-white' : 'bg-blue-50 text-blue-600 hover:bg-blue-100 dark:bg-blue-500/20 dark:text-blue-400 dark:hover:bg-blue-500/30'} border border-transparent dark:border-white/5 hover:scale-105`}
                             onClick={() => setIsPreferencesOpen(!isPreferencesOpen)}
                             title="UI Settings"
                         >
@@ -1029,6 +1576,6 @@ export default function App() {
                 )}
 
             </div>
-        </div>
+        </>
     );
 }

@@ -1,0 +1,5 @@
+name,url,labels
+Main Gate,rtsp://admin:pass@192.168.1.10:554/stream,"outdoor;gate"
+Lobby,rtsp://admin:pass@192.168.1.11:554/stream,"indoor"
+Parking Lot,rtsp://admin:pass@192.168.1.12:554/stream,"outdoor;parking"
+Warehouse,rtsp://admin:pass@192.168.1.13:554/stream,"indoor;storage"

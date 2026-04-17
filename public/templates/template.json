@@ -1,0 +1,22 @@
+[
+    {
+        "name": "Main Gate",
+        "url": "rtsp://admin:pass@192.168.1.10:554/stream",
+        "labels": ["outdoor", "gate"]
+    },
+    {
+        "name": "Lobby",
+        "url": "rtsp://admin:pass@192.168.1.11:554/stream",
+        "labels": ["indoor"]
+    },
+    {
+        "name": "Parking Lot",
+        "url": "rtsp://admin:pass@192.168.1.12:554/stream",
+        "labels": ["outdoor", "parking"]
+    },
+    {
+        "name": "Warehouse",
+        "url": "rtsp://admin:pass@192.168.1.13:554/stream",
+        "labels": ["indoor", "storage"]
+    }
+]
