@@ -28,3 +28,6 @@ temp/
 .context/
 
 .env
+
+# Tauri
+src-tauri/bin/
