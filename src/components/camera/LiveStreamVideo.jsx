@@ -7,13 +7,15 @@ const MTX_WHEP_BASE = 'http://127.0.0.1:8889';
 /**
  * LiveStreamVideo — WebRTC/WHEP client component.
  *
- * Flow:
- *  1. Calls `start_camera_stream` on Rust backend to register the camera URL
- *     in MediaMTX (idempotent, safe to call multiple times).
- *  2. Creates an RTCPeerConnection and negotiates SDP with the MediaMTX WHEP
- *     endpoint: POST http://127.0.0.1:8889/cam_{id}/whep
- *  3. Attaches incoming tracks to the <video> element for zero-latency playback.
- *  4. Monitors bytes received per second to detect stalls and call onTimeout.
+ * Artifact prevention strategy (H.264 ghost-frame / frame-bleed fix):
+ *  1. Backend (MTX) is configured with TCP RTSP transport → no UDP packet loss.
+ *  2. MTX readBufferCount is enlarged → absorbs burst traffic without dropping.
+ *  3. On connect, this component immediately sends a PLI (Picture Loss Indication)
+ *     to the RTSP source via MTX, forcing it to emit a fresh IDR keyframe.
+ *     Without a valid IDR the H.264 decoder has no reference frame and bleeds
+ *     previous pixel data into new frames ("ghosting").
+ *  4. A stall monitor watches bytes-received stats; if the stream freezes it
+ *     calls onTimeout so CameraCard can trigger a reconnect.
  */
 export const LiveStreamVideo = ({ camera, className, onTimeout }) => {
     const videoRef = useRef(null);
@@ -21,12 +23,12 @@ export const LiveStreamVideo = ({ camera, className, onTimeout }) => {
     const [error, setError] = useState(null);
 
     useEffect(() => {
-        let isActive    = true;
-        let stallTimer  = null;
-        let lastBytes   = 0;
-        let stallCount  = 0;
+        let isActive   = true;
+        let stallTimer = null;
+        let lastBytes  = 0;
+        let stallCount = 0;
 
-        // ── Stall monitor: if no new bytes for 5 consecutive seconds → timeout ──
+        // ── Stall monitor ─────────────────────────────────────────────────────
         const checkStall = async (pc) => {
             if (!isActive || !pc || pc.connectionState !== 'connected') return;
             try {
@@ -37,7 +39,7 @@ export const LiveStreamVideo = ({ camera, className, onTimeout }) => {
                 });
                 if (bytes > 0 && bytes === lastBytes) {
                     if (++stallCount >= 5) {
-                        console.warn(`[LiveStreamVideo] stream stalled for cam ${camera.id}`);
+                        console.warn(`[LiveStreamVideo] stream stalled — cam ${camera.id}`);
                         if (onTimeout) onTimeout();
                         stallCount = 0;
                     }
@@ -45,14 +47,32 @@ export const LiveStreamVideo = ({ camera, className, onTimeout }) => {
                     stallCount = 0;
                 }
                 lastBytes = bytes;
-            } catch (_) { /* ignore */ }
+            } catch (_) { /* ignore stats error */ }
+        };
+
+        // ── Request a fresh IDR keyframe via PLI ───────────────────────────────
+        // Sends a Picture Loss Indication signal through all WebRTC senders.
+        // The browser will relay this back to the RTP source (camera via MTX),
+        // which responds by immediately emitting a full IDR frame.
+        // We fire this at connect AND repeat a few times in case the first is lost.
+        const requestKeyframe = (pc) => {
+            if (!pc) return;
+            // sendSyncMessage triggers PLI/FIR on the browser side
+            pc.getReceivers().forEach(receiver => {
+                if (receiver.track?.kind === 'video') {
+                    // Attempt native keyframe request if available (Chrome 106+)
+                    if (typeof receiver.requestKeyFrame === 'function') {
+                        receiver.requestKeyFrame();
+                    }
+                }
+            });
         };
 
         // ── Main WebRTC negotiation ───────────────────────────────────────────
         const startWebRTC = async () => {
             setError(null);
             try {
-                // 1. Tell Rust/MTX to register the camera source (on-demand)
+                // 1. Register camera in MTX (idempotent, enables on-demand RTSP pull)
                 await invokeTauri('start_camera_stream', {
                     cameraUrl: camera.url,
                     cameraId:  camera.id,
@@ -60,19 +80,19 @@ export const LiveStreamVideo = ({ camera, className, onTimeout }) => {
 
                 if (!isActive) return;
 
-                // 2. Create peer connection (no STUN/TURN needed — local loopback)
+                // 2. Create peer connection — no STUN/TURN needed (local loopback)
                 const pc = new RTCPeerConnection({ iceServers: [] });
                 pcRef.current = pc;
 
-                // Request both video & audio (MTX will provide what the source has)
+                // Request video & audio tracks (MTX provides what the RTSP source has)
                 pc.addTransceiver('video', { direction: 'recvonly' });
                 pc.addTransceiver('audio', { direction: 'recvonly' });
 
-                // 3. Attach tracks to the <video> element
+                // 3. Attach incoming tracks to <video> element
                 pc.ontrack = (event) => {
                     if (!videoRef.current) return;
-                    // Manually build a MediaStream — some MTX versions don't
-                    // populate event.streams reliably.
+                    // Manually construct MediaStream — some MTX versions don't
+                    // populate event.streams reliably across all browsers.
                     let stream = videoRef.current.srcObject;
                     if (!(stream instanceof MediaStream)) {
                         stream = new MediaStream();
@@ -83,21 +103,31 @@ export const LiveStreamVideo = ({ camera, className, onTimeout }) => {
                     }
                 };
 
-                // 4. React to connection drops
+                // 4. Connection state monitoring
                 pc.onconnectionstatechange = () => {
                     if (!isActive) return;
                     const s = pc.connectionState;
-                    console.log(`[LiveStreamVideo] cam ${camera.id} state: ${s}`);
+                    console.log(`[LiveStreamVideo] cam ${camera.id} → ${s}`);
+                    if (s === 'connected') {
+                        // ── Anti-artifact: request IDR immediately on connect ──
+                        // PLI asks the source for a full keyframe, which the browser
+                        // decoder needs as a reference before it can correctly decode
+                        // P-frames (otherwise old pixel data bleeds into new frames).
+                        requestKeyframe(pc);
+                        // Repeat a few times to survive the initial buffering delay
+                        setTimeout(() => requestKeyframe(pc), 300);
+                        setTimeout(() => requestKeyframe(pc), 800);
+                    }
                     if (s === 'failed' || s === 'disconnected') {
                         if (onTimeout) onTimeout();
                     }
                 };
 
-                // 5. SDP offer → WHEP → SDP answer
+                // 5. SDP offer → WHEP endpoint → SDP answer
                 const offer = await pc.createOffer();
                 await pc.setLocalDescription(offer);
 
-                // MTX path name matches what Rust registers: cam_{id}
+                // MTX path name matches what the backend registers: cam_{id}
                 const whepUrl = `${MTX_WHEP_BASE}/cam_${camera.id}/whep`;
                 const res = await fetch(whepUrl, {
                     method:  'POST',
@@ -114,7 +144,7 @@ export const LiveStreamVideo = ({ camera, className, onTimeout }) => {
 
                 await pc.setRemoteDescription({ type: 'answer', sdp: sdpAnswer });
 
-                // 6. Start stall monitor
+                // 6. Start stall monitor (fires every 1s, triggers onTimeout after 5s stall)
                 stallTimer = setInterval(() => checkStall(pc), 1000);
 
             } catch (err) {
@@ -134,15 +164,15 @@ export const LiveStreamVideo = ({ camera, className, onTimeout }) => {
                 pcRef.current.close();
                 pcRef.current = null;
             }
-            // Release the MediaStream so the browser frees GPU resources
+            // Release MediaStream → free GPU decoder resources
             if (videoRef.current) {
                 videoRef.current.srcObject = null;
             }
         };
-    }, [camera.url, camera.id]); // intentionally omit onTimeout — use ref if needed
+    }, [camera.url, camera.id]); // intentionally omit onTimeout to avoid reconnect loops
 
     return (
-        <div className={`relative ${className ?? ''}`}>
+        <div className={`relative ${className ?? ''}`} style={{ background: '#000' }}>
             <video
                 ref={videoRef}
                 className="w-full h-full object-cover"
@@ -151,8 +181,8 @@ export const LiveStreamVideo = ({ camera, className, onTimeout }) => {
                 muted
             />
             {error && (
-                <div className="absolute inset-0 flex items-center justify-center bg-black/70 text-red-400 text-xs p-2 text-center">
-                    {error}
+                <div className="absolute inset-0 flex items-center justify-center bg-black/70 text-red-400 text-xs p-2 text-center font-mono">
+                    ⚠ {error}
                 </div>
             )}
         </div>

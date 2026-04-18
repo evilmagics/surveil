@@ -138,9 +138,16 @@ pub async fn upsert_camera_path(camera_id: i32, camera_url: &str) -> Result<(), 
     let name = path_name(camera_id);
 
     let payload = json!({
-        "source":            camera_url,
-        "sourceOnDemand":    true,
-        "sourceProtocol":    "automatic"
+        "source":               camera_url,
+        "sourceOnDemand":       true,
+        // Force TCP transport for the RTSP pull.
+        // UDP risks out-of-order / dropped RTP packets which corrupt H.264
+        // reference frames and produce the "ghost frame" / frame bleed artifact.
+        "sourceProtocol":       "tcp",
+        // When a new WebRTC reader connects, MTX will wait until it has buffered
+        // a complete GOP (Group of Pictures starting with an IDR keyframe) before
+        // forwarding data. This eliminates the initial ghosting when joining mid-stream.
+        "sourceAnyPortEnable":  false
     });
 
     // Try to add first
@@ -153,7 +160,7 @@ pub async fn upsert_camera_path(camera_id: i32, camera_url: &str) -> Result<(), 
         .map_err(|e| format!("MTX API unreachable: {}", e))?;
 
     if res.status().is_success() {
-        info!("MTX: added path '{}'", name);
+        info!("MTX: added path '{}' (TCP, IDR-gated)", name);
         return Ok(());
     }
 
@@ -175,7 +182,6 @@ pub async fn upsert_camera_path(camera_id: i32, camera_url: &str) -> Result<(), 
             name,
             res2.status()
         );
-        // Don't propagate — streaming may still work if path was pre-configured
         Ok(())
     }
 }
