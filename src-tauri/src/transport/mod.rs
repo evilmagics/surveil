@@ -1,1 +1,1 @@
-pub mod websocket;
+pub mod mediamtx_config;
