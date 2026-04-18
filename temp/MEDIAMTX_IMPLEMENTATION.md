@@ -23,10 +23,10 @@ Dokumen ini menjelaskan langkah-langkah teknis untuk mengganti arsitektur stream
   - Saat kamera di-tambah/edit/hapus, panggil REST API MediaMTX (`/v3/config/paths/add` atau reload total) agar perubahan langsung aktif tanpa memutus stream lain.
 
 ## 3. Frontend React: Migrasi Player
-- [ ] **HLS Integration**:
-  - Ganti `LiveStreamCanvas` (WebSocket + Jpeg) dengan `LiveStreamVideo` (HTML5 Video Tag).
-  - Gunakan URL format: `http://localhost:9888/{camera_id}/index.m3u8` (atau segmen HLS lainnya).
-  - (Opsional) Tambahkan `hls.js` jika browser tertentu tidak mendukung HLS native secara sempurna.
+- [ ] **WebRTC (WHEP) Integration**:
+  - Ganti `LiveStreamCanvas` (WebSocket + Jpeg) dengan `LiveStreamVideo` (HTML5 Video Tag + RTCPeerConnection).
+  - Lakukan negosiasi SDP menggunakan URL WebRTC API MediaMTX: `http://localhost:8889/{camera_id}/whep`.
+  - Pasang object MediaStream ke `<video autoPlay muted playsInline />` untuk delay <0.5 detik dan Auto ICE Restart (anti-stalling).
 - [ ] **Cleanup**:
   - Hapus logic WebSocket di frontend yang sudah tidak digunakan.
   - Hapus logic buffer/canvas draw yang memakan CPU di sisi klien.
@@ -38,5 +38,5 @@ Dokumen ini menjelaskan langkah-langkah teknis untuk mengganti arsitektur stream
 ## Alur Kerja Teknis (Flow)
 1. **Startup**: Tauri memanggil `mediamtx` sidecar.
 2. **Dynamic Paths**: MediaMTX membaca config awal.
-3. **On-Demand Connection**: Saat user membuka tab monitoring, browser memanggil URL HLS. MediaMTX mendeteksi 'demand' dan baru membuka koneksi RTSP ke kamera.
+3. **On-Demand Connection**: Saat user membuka tab monitoring, browser melakukan POST WHEP ke port 8889. MediaMTX mendeteksi 'demand' dan seketika membuka jalur RTSP ke WebRTC dengan Zero Transcoding (hemat memori) & Zero Latency.
 4. **Efficiency**: RAM tetap stabil di kisaran <100MB meski kamera bertambah, karena tidak ada proses transcoding (decode/encode) di sisi server.
