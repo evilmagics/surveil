@@ -16,14 +16,15 @@
     "@tauri-apps/plugin-dialog": "^2.7.0",
     "@tauri-apps/plugin-fs": "^2.5.0",
     "@tauri-apps/plugin-opener": "^2",
-    "lucide-react": "^1.8.0",
+    "lucide-react": "^0.475.0",
     "react": "^19.1.0",
-    "react-dom": "^19.1.0"
+    "react-dom": "^19.1.0",
+    "zustand": "^5.0.12"
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2",
-    "@vitejs/plugin-react": "^4.6.0",
+    "@vitejs/plugin-react": "^4.3.4",
     "tailwindcss": "^4.2.2",
-    "vite": "^7.0.4"
+    "vite": "^6.3.3"
   }
 }
