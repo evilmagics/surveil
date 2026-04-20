@@ -2,7 +2,8 @@ import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import {
     Video, Plus, Search, Filter, Trash2, Edit, RefreshCw,
     Wifi, WifiOff, AlertCircle, PlayCircle, Loader2, Info, ChevronLeft, ChevronRight, X,
-    Maximize, Settings, Moon, Sun, Monitor, Type, Link as LinkIcon, Tags, Columns, List, LayoutGrid, Activity, Camera, FileUp, FileDown
+    Maximize, Settings, Moon, Sun, Monitor, Type, Link as LinkIcon, Tags, Columns, List, LayoutGrid, Activity, Camera, FileUp, FileDown,
+    ArrowUp, ArrowDown, ArrowUpDown
 } from 'lucide-react';
 
 import { invoke } from '@tauri-apps/api/core';
@@ -17,14 +18,15 @@ import { Dialog } from './components/ui/Dialog';
 import { SmartLabelInput } from './components/ui/SmartLabelInput';
 import { LiveStreamVideo } from './components/camera/LiveStreamVideo';
 import { CameraCard } from './components/camera/CameraCard';
+import { useCameraVolatileStore } from './store/cameraStore';
 
 // --- MAIN APPLICATION COMPONENT ---
 export default function App() {
+    const updateCameraStatus = useCameraVolatileStore(state => state.updateCameraStatus);
     const [cameras, setCameras] = useState([]);
     const [isLoading, setIsLoading] = useState(true);
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(1);
-    const [isAppStarting, setIsAppStarting] = useState(true);
 
     // Filter & Sort state
     const [sortConfig, setSortConfig] = useState({ key: 'created_at', dir: 'desc' });
@@ -70,8 +72,7 @@ export default function App() {
         theme: 'dark',
         columns: '3',
         itemsPerPage: 12,
-        monitoringMode: false,
-        fpsLimit: 15
+        monitoringMode: false
     });
     const [isPreferencesOpen, setIsPreferencesOpen] = useState(false);
     const [selectedCameraDetails, setSelectedCameraDetails] = useState(null);
@@ -88,10 +89,10 @@ export default function App() {
     }, [prefs.theme]);
 
     useEffect(() => {
-        if (!isAppStarting) {
+        if (!isLoading) {
             invokeTauri('save_preferences', { prefs }).catch(console.error);
         }
-    }, [prefs, isAppStarting]);
+    }, [prefs, isLoading]);
 
     // Keyboard Shortcut Effect
     useEffect(() => {
@@ -134,8 +135,10 @@ export default function App() {
         } catch (e) {
             console.error(e);
         } finally {
+            console.log("[App] loadCameras finished");
             setIsLoading(false);
-            if (isAppStarting) setTimeout(() => setIsAppStarting(false), 800);
+            // Hidden-until-Ready: Show window only after data is fetched and React is ready
+            invokeTauri('show_main_window').catch(console.error);
         }
     };
 
@@ -419,36 +422,30 @@ export default function App() {
 
     const handleStateUpdate = useCallback((id, status) => {
         invokeTauri('update_camera_state', { id, status }).catch(console.error);
-        setCameras(prev => prev.map(c => c.id === id ? { ...c, status } : c));
-    }, []);
+        updateCameraStatus(id, status);
+    }, [updateCameraStatus]);
 
     // Determine dynamic grid columns based on preferences
     const getGridClass = () => {
         switch (prefs.columns) {
             case '1': return 'grid-cols-1';
-            case '2': return 'grid-cols-1 sm:grid-cols-2';
-            case '3': return 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3';
-            case '4': return 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4';
-            default: return 'grid-cols-1 sm:grid-cols-2 md:grid-cols-3'; // Default
+            case '2': return 'grid-cols-2'; // Direct 2 cols
+            case '3': return 'grid-cols-3'; // Direct 3 cols
+            case '4': return 'grid-cols-4'; // Direct 4 cols
+            default: return 'grid-cols-2 lg:grid-cols-3'; // Responsive default
         }
     };
 
-    // Startup loading screen
-    if (isAppStarting) {
-        return (
-            <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 flex flex-col items-center justify-center transition-colors duration-500">
-                <div className="w-16 h-16 bg-blue-600 rounded-2xl flex items-center justify-center shadow-xl shadow-blue-900/30 animate-pulse mb-6">
-                    <Video className="w-8 h-8 text-white" />
-                </div>
-                <h1 className="text-2xl font-bold tracking-tight text-zinc-900 dark:text-white mb-2">Sur<span className="text-blue-500">veil</span></h1>
-                <Loader2 className="w-6 h-6 animate-spin text-blue-500" />
-            </div>
-        );
-    }
+    // Since the window is hidden until loadCameras finishes,
+    // and index.html already shows the splash screen, 
+    // we don't need to render anything complex here while isLoading is true.
+    if (isLoading) return null;
+
+    console.log("[App] Rendering main UI. Cameras count:", cameras?.length, "Filtered:", filteredCameras?.length);
 
     return (
-        <>
-            <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 font-sans selection:bg-blue-500/30 transition-colors duration-500 flex flex-col overflow-x-hidden">
+        <React.Fragment>
+            <div className="h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 font-sans selection:bg-blue-500/30 transition-colors duration-500 flex flex-col overflow-hidden">
 
                 {/* Animated Top Navbar */}
                 <header className={`sticky top-0 z-30 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md border-zinc-200 dark:border-zinc-800 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden flex items-center ${prefs.monitoringMode ? 'h-0 opacity-0 border-b-0' : 'h-16 opacity-100 border-b'}`}>
@@ -474,7 +471,8 @@ export default function App() {
                             <Button size="icon" onClick={handleOpenAdd} className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 hover:bg-zinc-50 dark:hover:bg-zinc-800 shadow-sm" title="Add Camera">
                                 <div className="relative">
                                     <Video className="w-5 h-5 text-zinc-900 dark:text-zinc-100" />
-                                    <Plus className="w-4 h-4 absolute -bottom-1.5 -right-1.5 text-blue-500" />
+                                    {/* Plus center aligned to bottom-right corner of the Video icon */}
+                                    <Plus className="w-3.5 h-3.5 absolute -bottom-1 -right-1 text-blue-500" strokeWidth={2.5} />
                                 </div>
                             </Button>
                             <div className="h-6 w-px bg-zinc-300 dark:bg-zinc-700 hidden sm:block"></div>
@@ -486,7 +484,7 @@ export default function App() {
                 </header>
 
                 {/* Main Content */}
-                <main className={`container mx-auto flex-1 flex flex-col transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${prefs.monitoringMode ? 'px-2 py-2' : 'px-4 py-8'}`}>
+                <main className={`container mx-auto flex-1 overflow-y-auto transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${prefs.monitoringMode ? 'px-2 py-2' : 'px-4 py-8'}`}>
 
                     {/* Animated Search & Filter Title Area */}
                     <div className={`transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden ${prefs.monitoringMode ? 'max-h-0 opacity-0 mb-0' : 'max-h-[200px] opacity-100 mb-6'}`}>
@@ -506,9 +504,10 @@ export default function App() {
                                 Camera List <span className="text-zinc-500 text-sm font-normal ml-2">({filteredCameras.length} sources)</span>
                             </h2>
                             <div className="flex items-center space-x-2">
-                                <select 
-                                    className="bg-transparent border border-zinc-200 dark:border-zinc-800 text-sm rounded-md px-2 py-1 outline-none focus:border-blue-500"
-                                    value={filterProtocol} 
+                                {/* Protocol Filter */}
+                                <select
+                                    className="premium-select"
+                                    value={filterProtocol}
                                     onChange={(e) => setFilterProtocol(e.target.value)}
                                     title="Filter by Protocol"
                                 >
@@ -516,22 +515,29 @@ export default function App() {
                                     <option value="RTSP">RTSP</option>
                                     <option value="HTTP">HTTP</option>
                                 </select>
-                                <div className="flex items-center space-x-1 bg-transparent border border-zinc-200 dark:border-zinc-800 rounded-md px-1 py-1">
-                                    <select 
-                                        className="bg-transparent text-sm border-none outline-none pr-1"
-                                        value={sortConfig.key} 
+
+                                {/* Sort Field + Direction */}
+                                <div className="flex items-center bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-700 rounded-lg shadow-sm overflow-hidden">
+                                    <select
+                                        className="appearance-none bg-transparent text-zinc-800 dark:text-zinc-200 text-sm pl-4 pr-1 spy-1.5 outline-none focus:ring-0 cursor-pointer border-none"
+                                        value={sortConfig.key}
                                         onChange={(e) => setSortConfig(c => ({...c, key: e.target.value}))}
                                         title="Sort Field"
                                     >
                                         <option value="created_at">Date Added</option>
                                         <option value="name">Name</option>
                                     </select>
-                                    <button 
+                                    {/* Divider */}
+                                    <span className="w-px h-4 bg-zinc-200 dark:bg-zinc-700 mx-0.5" />
+                                    <button
                                         onClick={() => setSortConfig(c => ({...c, dir: c.dir === 'asc' ? 'desc' : 'asc'}))}
-                                        className="p-1 hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded"
-                                        title={sortConfig.dir === 'asc' ? 'Ascending' : 'Descending'}
+                                        className="px-2 py-1.5 text-zinc-500 dark:text-zinc-400 hover:text-blue-500 dark:hover:text-blue-400 hover:bg-zinc-100 dark:hover:bg-zinc-800 transition-colors"
+                                        title={sortConfig.dir === 'asc' ? 'Ascending — click for Descending' : 'Descending — click for Ascending'}
                                     >
-                                        {sortConfig.dir === 'asc' ? <ChevronLeft className="w-3.5 h-3.5 rotate-90" /> : <ChevronRight className="w-3.5 h-3.5 -rotate-90" />}
+                                        {sortConfig.dir === 'asc'
+                                            ? <ArrowUp className="w-3.5 h-3.5" />
+                                            : <ArrowDown className="w-3.5 h-3.5" />
+                                        }
                                     </button>
                                 </div>
                             </div>
@@ -1047,22 +1053,6 @@ export default function App() {
                                     <div>
                                         <h4 className="text-[10px] font-bold text-zinc-400 dark:text-zinc-500 uppercase tracking-widest mb-3">Layout Settings</h4>
 
-                                        <div className="flex items-center justify-between py-1.5 mb-1.5">
-                                            <span className="text-sm text-zinc-600 dark:text-zinc-300 flex items-center">
-                                                <Activity className="w-4 h-4 mr-2.5 text-zinc-400" /> Max FPS
-                                            </span>
-                                            <select
-                                                className="bg-transparent text-sm border border-zinc-200 dark:border-zinc-700 rounded-md px-2 py-1 text-zinc-900 dark:text-zinc-100 outline-none focus:ring-1 focus:ring-blue-500"
-                                                value={prefs.fpsLimit}
-                                                onChange={(e) => setPrefs(p => ({ ...p, fpsLimit: Number(e.target.value) }))}
-                                            >
-                                                <option value={10}>10 FPS</option>
-                                                <option value={15}>15 FPS</option>
-                                                <option value={20}>20 FPS</option>
-                                                <option value={30}>30 FPS</option>
-                                                <option value={60}>60 FPS</option>
-                                            </select>
-                                        </div>
 
                                         <div className="flex items-center justify-between py-1.5 mb-1.5">
                                             <span className="text-sm text-zinc-600 dark:text-zinc-300 flex items-center">
@@ -1081,7 +1071,7 @@ export default function App() {
                                                 <Columns className="w-4 h-4 mr-2.5 text-zinc-400" /> Grid Columns
                                             </span>
                                             <select
-                                                className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 text-xs rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-blue-500"
+                                                className="premium-select !py-1 !px-3 !pr-8 !text-xs !rounded-lg"
                                                 value={prefs.columns}
                                                 onChange={(e) => setPrefs(p => ({ ...p, columns: e.target.value }))}
                                             >
@@ -1097,11 +1087,11 @@ export default function App() {
                                                 <List className="w-4 h-4 mr-2.5 text-zinc-400" /> Limit Per Page
                                             </span>
                                             <select
-                                                className="bg-zinc-100 dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 text-zinc-900 dark:text-zinc-100 text-xs rounded-lg px-2 py-1 outline-none focus:ring-1 focus:ring-blue-500"
+                                                className="premium-select !py-1 !px-3 !pr-8 !text-xs !rounded-lg"
                                                 value={prefs.itemsPerPage}
                                                 onChange={(e) => {
                                                     setPrefs(p => ({ ...p, itemsPerPage: Number(e.target.value) }));
-                                                    setPage(1); // Reset page on limit change
+                                                    setPage(1);
                                                 }}
                                             >
                                                 <option value={8}>8 Items</option>
@@ -1154,6 +1144,6 @@ export default function App() {
                 )}
 
             </div>
-        </>
+        </React.Fragment>
     );
 }
