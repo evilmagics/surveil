@@ -9,8 +9,6 @@ use crate::camera::mediamtx::upsert_camera_path;
 pub async fn start_camera_stream(
     camera_url: String,
     camera_id: i32,
-    // fps_limit kept for API compatibility — MTX handles this natively
-    _fps_limit: Option<i32>,
     _state: State<'_, AppState>,
 ) -> Result<(), String> {
     info!(

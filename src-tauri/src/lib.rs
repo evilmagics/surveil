@@ -12,6 +12,12 @@ use camera::manager::{
 };
 use camera::stream::start_camera_stream;
 use camera::mediamtx::start_mediamtx;
+use tauri::{Manager, Window};
+
+#[tauri::command]
+fn show_main_window(window: Window) {
+    window.show().unwrap();
+}
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -23,7 +29,7 @@ pub fn run() {
     // We block on the async startup here so MTX is ready before the first frame.
     let mtx_handle = tauri::async_runtime::block_on(start_mediamtx());
 
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_dialog::init())
@@ -43,7 +49,29 @@ pub fn run() {
             save_template_file,
             get_preferences,
             save_preferences,
+            show_main_window,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    app.run(|app_handle, event| {
+        if let tauri::RunEvent::ExitRequested { .. } = event {
+            tracing::info!("Shutting down... Cleaning up background processes and states.");
+            // Karena dipanggil di dalam sync context, kita bisa block_on child kill
+            let state = app_handle.state::<AppState>();
+            
+            tauri::async_runtime::block_on(async {
+                let mut guard = state.mtx.lock().await;
+                if let Some(child) = guard.as_mut() {
+                    let _ = child.kill().await;
+                    tracing::info!("MediaMTX stopped gracefully.");
+                }
+            });
+
+            let _ = state.db.lock().map(|conn| {
+                let _ = conn.execute("UPDATE cameras SET status = 'disconnected'", []);
+                tracing::info!("Semua sumber kamera diset menjadi disconnected pada saat exit.");
+            });
+        }
+    });
 }
