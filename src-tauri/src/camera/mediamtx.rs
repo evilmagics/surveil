@@ -131,23 +131,28 @@ fn path_name(camera_id: i32) -> String {
     format!("cam_{}", camera_id)
 }
 
+fn mtx_semaphore() -> &'static tokio::sync::Semaphore {
+    static SEM: std::sync::OnceLock<tokio::sync::Semaphore> = std::sync::OnceLock::new();
+    SEM.get_or_init(|| tokio::sync::Semaphore::new(4)) // Membatasi max 4 koneksi API bersamaan (Task 3.2)
+}
+
 /// Adds or updates a camera path in MediaMTX via its REST API.
 /// This is idempotent — safe to call multiple times.
 pub async fn upsert_camera_path(camera_id: i32, camera_url: &str) -> Result<(), String> {
+    // Acquire tracking permit to prevent MediaMTX REST API overload during bulk starts
+    let _permit = mtx_semaphore().acquire().await.map_err(|e| format!("Semaphore error: {}", e))?;
+
     let client = http_client();
     let name = path_name(camera_id);
 
     let payload = json!({
-        "source":               camera_url,
-        "sourceOnDemand":       true,
-        // Force TCP transport for the RTSP pull.
-        // UDP risks out-of-order / dropped RTP packets which corrupt H.264
-        // reference frames and produce the "ghost frame" / frame bleed artifact.
-        "sourceProtocol":       "tcp",
-        // When a new WebRTC reader connects, MTX will wait until it has buffered
-        // a complete GOP (Group of Pictures starting with an IDR keyframe) before
-        // forwarding data. This eliminates the initial ghosting when joining mid-stream.
-        "sourceAnyPortEnable":  false
+        "source":           camera_url,
+        "sourceOnDemand":   true,
+        // Force TCP for RTSP pull — eliminates packet-loss artifacts on busy LANs.
+        // Field name per MediaMTX v1.11.0 REST API schema.
+        "rtspTransport":    "tcp",
+        // Allow cameras behind NAT that send RTP from a different port.
+        "rtspAnyPort":      true
     });
 
     // Try to add first

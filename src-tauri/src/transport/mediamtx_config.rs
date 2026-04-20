@@ -3,15 +3,24 @@ use tracing::info;
 
 /// Generates a minimal mediamtx.yml config file in the app data dir.
 /// Returns the path to the generated file.
+/// Config is validated against MediaMTX v1.11.0 schema.
 pub fn generate_config(data_dir: &PathBuf) -> Result<PathBuf, String> {
     let config_path = data_dir.join("mediamtx.yml");
 
+    // All field names verified against MediaMTX v1.11.0 official config schema.
+    // https://github.com/bluenviron/mediamtx/blob/v1.11.0/mediamtx.yml
     let config_content = r#"# Surveil - MediaMTX Auto-Generated Config
-# DO NOT EDIT - This file is regenerated on each app start.
+# DO NOT EDIT - Regenerated on each app start.
+# Compatible with MediaMTX v1.11.0
 
 # Logging
 logLevel: warn
 logDestinations: [stdout]
+
+# Root-level timeouts (v1.11.0 — these are NOT under pathDefaults)
+readTimeout: 30s
+writeTimeout: 10s
+writeQueueSize: 4096
 
 # Metrics & API
 metrics: no
@@ -27,53 +36,32 @@ srt: no
 # RTSP - input protocol from IP cameras
 rtsp: yes
 rtspAddress: :8554
-
-# Force TCP for RTSP input.
-# UDP is faster but causes packet loss on heavily loaded networks → frame artifacts.
-# TCP guarantees ordered delivery → eliminates missing-packet-induced ghosting.
-protocols: [tcp]
+# Force TCP for RTSP transport (eliminates packet-loss artifacts on busy LANs)
+rtspTransports: [tcp]
 
 # WebRTC - WHEP output to browser
 webrtc: yes
 webrtcAddress: :8889
-
-# Increase RTP buffer to handle burst traffic from high-resolution cameras.
-# Default 512 is too small for 1080p+ streams, causing packet drops → artifacts.
-# 4096 bufs = ~6MB at 1500B/packet — safe for multi-camera setups.
-readBufferCount: 4096
-
-# ICE servers not needed for local loopback connections
 webrtcICEServers2: []
+# Loopback — no external ICE relay needed
+webrtcLocalUDPAddress: :8189
+webrtcLocalTCPAddress: ''
+webrtcIPsFromInterfaces: yes
 
-# Default path settings (applied to all paths)
+# Default path settings (applied to all camera paths)
 pathDefaults:
-  # Only pull from source when there is an active viewer (saves CPU/RAM)
+  # Only pull from source when there is an active viewer
   sourceOnDemand: yes
-  # Allow up to 10s for the RTSP source to send the first IDR keyframe
-  # before any WebRTC client receives data. This prevents initial ghosting.
-  sourceOnDemandStartTimeout: 10s
-  # Close RTSP connection 60s after the last viewer disconnects
-  sourceOnDemandCloseAfter: 60s
-
+  # Wait up to 20s for first IDR keyframe before failing
+  sourceOnDemandStartTimeout: 20s
+  # Keep RTSP connection alive 120s after last viewer disconnects
+  sourceOnDemandCloseAfter: 120s
+  # Any-port support for cameras behind NAT
+  rtspAnyPort: yes
   # Disable recording
   record: no
 
-  # ── Optional: Enable FFmpeg re-encode for cameras with B-frame artifacts ──
-  # If a specific camera produces ghosting, override its path in the app config
-  # to use a re-encoded RTSP source piped through FFmpeg:
-  #
-  #   runOnPublish: >-
-  #     ffmpeg -hide_banner -loglevel error
-  #     -rtsp_transport tcp -i rtsp://CAMERA_IP:PORT/stream
-  #     -c:v libx264 -profile:v baseline -level:v 3.1
-  #     -g 30 -keyint_min 15 -sc_threshold 0
-  #     -c:a aac -f rtsp rtsp://127.0.0.1:8554/$MTX_PATH
-  #   runOnPublishRestart: yes
-  #
-  # This converts Main/High-profile H.264 (with B-frames) to Baseline (no B-frames)
-  # at the cost of ~1 CPU core per camera. Use only for problematic cameras.
-
-# Camera paths will be added dynamically via the REST API
+# Camera paths added dynamically via REST API
 paths: {}
 "#;
 

@@ -272,6 +272,7 @@ pub async fn check_connection(url: String) -> Result<serde_json::Value, String> 
     }
 
     let mut cmd = Command::new(&ffprobe_path);
+    cmd.kill_on_drop(true); // Pastikan proses tidak leak jika dibatalkan/timeout
 
     if url.starts_with("rtsp") {
         cmd.arg("-rtsp_transport").arg("tcp");
