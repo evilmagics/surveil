@@ -16,7 +16,7 @@ export default defineConfig(async () => ({
   server: {
     port: 1420,
     strictPort: true,
-    host: host || false,
+    host: "127.0.0.1",
     hmr: host
       ? {
           protocol: "ws",
@@ -25,8 +25,22 @@ export default defineConfig(async () => ({
         }
       : undefined,
     watch: {
-      // 3. tell Vite to ignore watching `src-tauri`
-      ignored: ["**/src-tauri/**"],
+      // 3. tell Vite to ignore watching irrelevant/large directories
+      ignored: [
+        "**/src-tauri/**",
+        "**/node_modules/**",
+        "**/dist/**",
+        "**/.git/**",
+        "**/proposal/**",
+        "**/temp/**",
+        "**/tests/**",
+        "**/.agents/**"
+      ],
     },
+  },
+  optimizeDeps: {
+    include: ["lucide-react", "react", "react-dom", "@tauri-apps/api/core"],
+    // Fix: prevent Vite from scanning thousands of Rust doc HTML files in src-tauri/target
+    entries: ["index.html"],
   },
 }));

@@ -13,13 +13,14 @@
     "windows": [
       {
         "title": "surveil",
-        "width": 800,
-        "height": 600,
+        "width": 1024,
+        "height": 768,
+        "visible": false,
         "dragDropEnabled": false
       }
     ],
     "security": {
-      "csp": null
+      "csp": "default-src 'self'; connect-src 'self' http://127.0.0.1:8889 http://127.0.0.1:9997 ws://127.0.0.1:8889; media-src 'self' blob: mediastream:; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'"
     }
   },
   "bundle": {

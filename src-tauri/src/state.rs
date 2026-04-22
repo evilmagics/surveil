@@ -1,9 +1,9 @@
 use rusqlite::Connection;
-use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
-use tokio::sync::{broadcast, Mutex as AsyncMutex};
+use std::sync::Mutex;
 
-pub struct AppState {  
-    pub db: Mutex<Connection>,
-    pub streams: Arc<AsyncMutex<HashMap<i32, broadcast::Sender<Arc<Vec<u8>>>>>>,
+use crate::camera::mediamtx::MtxHandle;
+
+pub struct AppState {
+    pub db:  Mutex<Connection>,
+    pub mtx: MtxHandle,
 }
