@@ -1,5 +1,5 @@
 import React from 'react';
-import { Loader2, AlertCircle, Wifi, Settings2, ShieldCheck } from 'lucide-react';
+import { Loader2, AlertCircle, Wifi, Settings2, ShieldCheck, Activity } from 'lucide-react';
 import { Input, Button, Chip } from '@heroui/react';
 import { SmartLabelInput } from './ui/SmartLabelInput';
 import { Dialog } from './ui/Dialog';
@@ -38,7 +38,7 @@ export function EditCameraModal({
             onPress={checkConnection} 
             disabled={!formData.url || isCheckingConn}
             startContent={isCheckingConn ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wifi className="w-4 h-4" />}
-            className="font-semibold"
+            className="hidden sm:flex font-semibold"
           >
             Test Connection
           </Button>
@@ -85,7 +85,23 @@ export function EditCameraModal({
             variant="bordered"
             radius="xl"
             required
-            className="w-full bg-zinc-50/50 dark:bg-zinc-900/30 border-zinc-200 dark:border-zinc-800 focus-within:border-blue-500 transition-colors rounded-xl overflow-hidden"
+            className="w-full bg-zinc-50/50 dark:bg-zinc-900/30 border-zinc-200 dark:border-zinc-800 focus-within:border-blue-500 transition-colors rounded-xl"
+            classNames={{
+              inputWrapper: "pr-1 h-10",
+            }}
+            endContent={
+              <Button
+                isIconOnly
+                size="sm"
+                variant="solid"
+                color="primary"
+                onPress={checkConnection}
+                disabled={!formData.url || isCheckingConn}
+                className="max-sm:flex hidden h-8 w-8 min-w-0 bg-blue-500 text-white shadow-md active:scale-95 transition-all"
+              >
+                {isCheckingConn ? <Loader2 className="w-4 h-4 animate-spin" /> : <Activity className="w-4 h-4" />}
+              </Button>
+            }
           />
           <p className="text-[11px] font-medium text-zinc-500 pt-1">Only RTSP and standard HTTP streams are supported.</p>
         </div>
@@ -126,7 +142,7 @@ export function EditCameraModal({
             {formMetadata ? (
               <div className="grid grid-cols-2 gap-x-6 gap-y-4">
                 <div className="flex flex-col gap-0.5">
-                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-tight">Resolution</span>
+                  <span className="text-[10px] font-bold text-zinc-400 uppercase tracking-tight">Res.</span>
                   <span className="text-sm font-mono font-bold text-zinc-900 dark:text-zinc-100">{formMetadata.resolution}</span>
                 </div>
                 <div className="flex flex-col gap-0.5">

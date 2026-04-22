@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
     Search, Plus, LayoutGrid, ChevronLeft, ChevronRight,
     ArrowDownNarrowWide, ArrowUpNarrowWide, Loader2, Settings, Filter, X,
-    ArrowUpDown, Monitor, Trash2, Edit, MoreVertical, Hash, Video
+    ArrowUpDown, Monitor, Trash2, Edit, MoreVertical, Hash, Video, Star,
+    Square, Grid2X2
 } from 'lucide-react';
 
 import { 
@@ -32,8 +33,9 @@ import { ThemeToggle } from './components/ui/ThemeToggle';
 import { TitleBar } from './components/layout/TitleBar';
 import RetroGrid from './components/ui/RetroGrid';
 import { AnimatedGradientText } from './components/ui/AnimatedGradientText';
-import { invokeTauri } from './lib/utils';
+import { invokeTauri, cn } from './lib/utils';
 import { getCurrentWindow } from '@tauri-apps/api/window';
+import { Dock, DockIcon } from './components/ui/Dock';
 
 export default function App() {
     const { prefs, setPrefs, isLoadingPrefs } = usePreferences();
@@ -56,9 +58,11 @@ export default function App() {
     const cameraForm = useCameraForm(filteredCameras, refreshCameras);
 
     // Banner & Scroll UI State
-    const [isBannerVisible, setIsBannerVisible] = useState(false);
+    const [isBannerVisible, setIsBannerVisible] = useState(true);
     const [isScrolled, setIsScrolled] = useState(false);
-    const scrollRef = React.useRef(null);
+    const [isSingleColumnMobile, setIsSingleColumnMobile] = useState(false);
+    const [isMobileSearchVisible, setIsMobileSearchVisible] = useState(false);
+    const scrollRef = useRef(null);
 
     // Side effects & Local UI state
     const [isDeleteModalOpen, setIsDeleteModalOpen] = useState(false);
@@ -66,6 +70,16 @@ export default function App() {
     const [selectedCameraDetails, setSelectedCameraDetails] = useState(null);
     const [theaterCamera, setTheaterCamera] = useState(null);
     const [showMonitorToast, setShowMonitorToast] = useState(false);
+    const [isMobileOS, setIsMobileOS] = useState(false);
+
+    useEffect(() => {
+        const checkMobile = () => {
+            const userAgent = navigator.userAgent || navigator.vendor || window.opera;
+            const isMobile = /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(userAgent);
+            setIsMobileOS(isMobile);
+        };
+        checkMobile();
+    }, []);
 
     // Banner visibility logic (24h hide)
     useEffect(() => {
@@ -73,6 +87,8 @@ export default function App() {
         const hiddenUntil = localStorage.getItem(BANNER_KEY);
         if (!hiddenUntil || Date.now() > parseInt(hiddenUntil)) {
             setIsBannerVisible(true);
+        } else {
+            setIsBannerVisible(false);
         }
     }, []);
 
@@ -84,10 +100,16 @@ export default function App() {
 
     // Scroll listener to hide banner
     const handleScroll = (e) => {
-        if (e.target.scrollTop > 50) {
+        const scrollTop = e.target.scrollTop;
+        if (scrollTop > 50) {
             setIsScrolled(true);
         } else {
             setIsScrolled(false);
+        }
+
+        // Auto-hide mobile search box on scroll if empty
+        if (isMobileSearchVisible && search.trim() === '' && scrollTop > 100) {
+            setIsMobileSearchVisible(false);
         }
     };
 
@@ -180,8 +202,13 @@ export default function App() {
 
     return (
         <div className="relative h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 font-sans selection:bg-blue-500/30 transition-colors duration-500 flex flex-col overflow-hidden">
-            {!theaterCamera && !prefs.monitoringMode && <TitleBar />}
-            <ToastProvider placement="top end" />
+            {!theaterCamera && !prefs.monitoringMode && !isMobileOS && <TitleBar />}
+            <ToastProvider 
+                placement={isMobileOS ? "top-center" : "top-end"}
+                toastOptions={{
+                    className: isMobileOS ? "max-w-[280px]" : ""
+                }}
+            />
             <RetroGrid className="z-0 opacity-40" />
 
             {/* Banner Area */}
@@ -219,28 +246,41 @@ export default function App() {
                 </AnimatePresence>
 
                 {/* Navbar / Header */}
-                <header className={`sticky top-0 z-30 bg-white/60 dark:bg-zinc-950/60 backdrop-blur-xl border-zinc-200/50 dark:border-zinc-800/30 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden flex items-center ${prefs.monitoringMode ? 'h-0 opacity-0 border-b-0' : 'h-14 opacity-100 border-b'}`}>
-                    <div className="container mx-auto px-6 w-full flex items-center justify-between relative z-10">                        {/* Left: Branding & Status */}
-                        <div className="flex-1 flex items-center gap-4 min-w-[200px]">
-                            <div className="flex flex-col">
-                                <h1 className="text-xs font-black uppercase tracking-[0.3em] text-zinc-900 dark:text-white leading-none">
-                                    Live Feeds
-                                </h1>
-                                <div className="flex items-center gap-2 mt-1.5">
-                                    <div className="relative flex items-center justify-center">
-                                        <div className="absolute w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping opacity-75" />
-                                        <div className="relative w-1 h-1 bg-emerald-500 rounded-full" />
+                <header className={`sticky top-0 z-30 bg-white/60 dark:bg-zinc-950/60 backdrop-blur-xl border-zinc-200/50 dark:border-zinc-800/30 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden flex flex-col ${
+                    prefs.monitoringMode 
+                        ? 'h-0 opacity-0 border-b-0' 
+                        : isScrolled 
+                            ? 'h-14 sm:h-14 opacity-100 border-b' 
+                            : isMobileSearchVisible 
+                                ? 'h-auto min-h-14 sm:h-14 opacity-100 border-b'
+                                : 'h-14 sm:h-14 opacity-100 border-b'
+                }`}>
+                    <div className="container mx-auto px-4 sm:px-6 w-full flex items-center justify-between h-14 relative z-10">                        {/* Left: Branding & Status */}
+                        <div className="flex-1 flex items-center gap-4 sm:min-w-[200px]">
+                            <div className="flex items-center gap-3">
+                                <div className="p-2 bg-blue-500/10 rounded-xl border border-blue-500/20 shadow-sm">
+                                    <Video className="w-4 h-4 text-blue-500" />
+                                </div>
+                                <div className="flex items-center gap-3">
+                                    <h1 className="text-[11px] font-black uppercase tracking-[0.25em] text-zinc-900 dark:text-white leading-none">
+                                        SURVEIL
+                                    </h1>
+                                    <div className="flex items-center gap-2 border-l border-zinc-200 dark:border-zinc-800 pl-3 h-4">
+                                        <div className="relative flex items-center justify-center">
+                                            <div className="absolute w-2 h-2 bg-emerald-500 rounded-full animate-ping opacity-20" />
+                                            <div className="relative w-1.5 h-1.5 bg-emerald-500 rounded-full border border-white dark:border-zinc-950" />
+                                        </div>
+                                        <span className="text-[10px] font-bold text-zinc-500 dark:text-zinc-400 tabular-nums">
+                                            {filteredCameras.length}
+                                        </span>
                                     </div>
-                                    <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 leading-none">
-                                        {filteredCameras.length} Online
-                                    </span>
                                 </div>
                             </div>
                         </div>
 
-                        {/* Center Section: Unified Search */}
-                        <div className="flex-initial w-full max-w-lg mx-auto px-4">
-                            <div className="relative group">
+                        {/* Center Section: Unified Search (Desktop) */}
+                        <div className="hidden sm:flex flex-initial w-full max-w-lg mx-auto px-4">
+                            <div className="relative group w-full">
                                 <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400 group-focus-within:text-blue-500 transition-colors duration-300" />
                                 <Input
                                     placeholder="Search system, protocol or tags..."
@@ -255,17 +295,18 @@ export default function App() {
                         </div>
 
                         {/* Right Section: Action Groups */}
-                        <div className="flex-1 flex items-center justify-end gap-6 min-w-[200px]">
+                        <div className="flex-1 flex items-center justify-end gap-6 sm:min-w-[200px]">
                             
-                            {/* Group 1: View Controls (Refinement) */}
-                            <div className="flex items-center gap-1">
+                            {/* Desktop View Controls */}
+                            <div className="hidden sm:flex items-center gap-1">
                                 {/* Unified Filter Hub */}
                                 <Popover placement="bottom-end" showArrow offset={10}>
                                     <PopoverTrigger>
                                         <Button 
+                                            as="div"
                                             variant="ghost" 
                                             size="sm" 
-                                            className={`h-9 px-3 text-[10px] font-black uppercase tracking-wider gap-2 transition-all ${
+                                            className={`h-9 px-3 text-[10px] font-black uppercase tracking-wider gap-2 transition-all cursor-pointer flex items-center justify-center ${
                                                 (filterCategory !== 'all' || filterProtocol !== 'All' || activeTags.length > 0)
                                                 ? 'text-blue-600 bg-blue-50/50 dark:bg-blue-500/10' 
                                                 : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
@@ -436,8 +477,8 @@ export default function App() {
                                 </Popover>
                             </div>
 
-                            {/* Group 2: Primary Action (Creation) */}
-                            <div className="flex items-center">
+                            {/* Always show Add Camera Button (on both mobile and desktop) */}
+                             <div className="flex items-center mr-1 sm:mr-0">
                                 <Button
                                     variant="ghost"
                                     size="icon"
@@ -452,8 +493,8 @@ export default function App() {
                                 </Button>
                             </div>
 
-                            {/* Group 3: Utility (Configuration) */}
-                            <div className="flex items-center gap-1">
+                            {/* Desktop Utility (Configuration) */}
+                            <div className="hidden sm:flex items-center gap-1">
                                 <Button 
                                     variant="ghost" 
                                     size="icon" 
@@ -468,6 +509,30 @@ export default function App() {
                         </div>
 
                     </div>
+
+                    {/* Mobile Search Area (Visible only when search button in dock is clicked) */}
+                    <AnimatePresence>
+                        {isMobileSearchVisible && !prefs.monitoringMode && (
+                            <motion.div 
+                                initial={{ height: 0, opacity: 0 }}
+                                animate={{ height: 'auto', opacity: 1 }}
+                                exit={{ height: 0, opacity: 0 }}
+                                transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                                className="sm:hidden px-3 pb-3.5 border-b border-zinc-200/50 dark:border-zinc-800/30 overflow-hidden"
+                            >
+                                <div className="relative group mt-3">
+                                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-400" />
+                                    <Input
+                                        placeholder="Search cameras..."
+                                        className="w-full pl-9 h-8 bg-zinc-200/50 dark:bg-zinc-900/50 border-none rounded-lg text-xs backdrop-blur-sm"
+                                        value={search}
+                                        onChange={(e) => { setSearch(e.target.value); setPage(1); }}
+                                        autoFocus
+                                    />
+                                </div>
+                            </motion.div>
+                        )}
+                    </AnimatePresence>
                 </header>
 
                 {/* Layout Wrapper (Scrollable Area) */}
@@ -478,13 +543,17 @@ export default function App() {
                 >
 
                     {/* Main Content */}
-                    <main className={`container mx-auto flex flex-col transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${prefs.monitoringMode ? 'px-2 py-2' : 'px-6 py-6'}`}>
+                    <main className={`container mx-auto flex flex-col transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${prefs.monitoringMode ? 'px-2 py-2' : 'px-2 sm:px-6 py-6'}`}>
                         
 
 
                         {/* Grid */}
                         {paginatedCameras.length > 0 ? (
-                            <div className={`grid ${getGridClass()} transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${prefs.monitoringMode ? 'gap-2' : 'gap-6'}`}>
+                            <div className={`grid transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${
+                                isSingleColumnMobile 
+                                    ? 'grid-cols-1' 
+                                    : `grid-cols-2 sm:${getGridClass()}`
+                            } ${prefs.monitoringMode ? 'gap-2' : 'gap-2 sm:gap-6'}`}>
                                 {paginatedCameras.map((cam, index) => (
                                     <CameraCard
                                         key={cam.id}
@@ -514,8 +583,7 @@ export default function App() {
                                 <div className="flex items-center justify-between">
                                     <p className="text-sm text-zinc-500">
                                         Showing {((page - 1) * prefs.itemsPerPage) + 1} to {Math.min(page * prefs.itemsPerPage, filteredCameras.length)} of {filteredCameras.length}
-                                    </p>
-                                    <div className="flex space-x-2">
+                                    </p>                                    <div className="flex space-x-2">
                                         <Button variant="outline" size="sm" onClick={() => setPage(p => Math.max(1, p - 1))} disabled={page === 1}>
                                             <ChevronLeft className="w-4 h-4" />
                                         </Button>
@@ -600,6 +668,148 @@ export default function App() {
                     )}
                 </AnimatePresence>
 
+                {/* MagicUI Dock (Mobile Only) */}
+                <AnimatePresence>
+                    {!prefs.monitoringMode && !theaterCamera && (
+                        <motion.div
+                            initial={{ y: 100, x: '-50%', opacity: 0 }}
+                            animate={{ y: 0, x: '-50%', opacity: 1 }}
+                            exit={{ y: 100, x: '-50%', opacity: 0 }}
+                            className="fixed bottom-12 left-1/2 z-50 sm:hidden"
+                        >
+                            <Dock direction="middle" iconSize={32} iconMagnification={40} className="bg-white/80 dark:bg-zinc-900/80 border-white/20 dark:border-zinc-800/50 shadow-2xl h-[48px]">
+                                <DockIcon onClick={() => {
+                                    setIsMobileSearchVisible(!isMobileSearchVisible);
+                                    if (!isMobileSearchVisible) scrollRef.current?.scrollTo({ top: 0, behavior: 'smooth' });
+                                }}>
+                                    <Search className={cn("w-4 h-4 transition-colors", isMobileSearchVisible ? "text-blue-500" : "text-zinc-500")} />
+                                </DockIcon>
+                                <Popover placement="top" showArrow offset={20}>
+                                    <PopoverTrigger>
+                                        <DockIcon>
+                                            <Filter className={cn("w-4 h-4 transition-colors", (filterCategory !== 'all' || filterProtocol !== 'All' || activeTags.length > 0) ? "text-blue-500" : "text-zinc-500")} />
+                                        </DockIcon>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-[320px] p-0 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-2xl border border-zinc-200/50 dark:border-zinc-800/50 shadow-2xl">
+                                        <div className="p-4 flex flex-col gap-5">
+                                            {/* Section 1: Category */}
+                                            <div>
+                                                <label className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500 mb-2.5 block">Category</label>
+                                                <div className="flex gap-2">
+                                                    {[
+                                                        { id: 'all', label: 'All Feeds' },
+                                                        { id: 'favorites', label: 'Favorites' }
+                                                    ].map(cat => (
+                                                        <button
+                                                            key={cat.id}
+                                                            onClick={() => setFilterCategory(cat.id)}
+                                                            className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-all ${
+                                                                filterCategory === cat.id
+                                                                ? 'bg-zinc-900 dark:bg-zinc-100 text-zinc-100 dark:text-zinc-900 border-zinc-900 dark:border-zinc-100 shadow-md'
+                                                                : 'bg-transparent border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:border-zinc-300 dark:hover:border-zinc-700'
+                                                            }`}
+                                                        >
+                                                            {cat.label}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Section 2: Protocol */}
+                                            <div>
+                                                <label className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500 mb-2.5 block">Protocol</label>
+                                                <div className="flex gap-2">
+                                                    {['All', 'RTSP', 'HTTP'].map(proto => (
+                                                        <button
+                                                            key={proto}
+                                                            onClick={() => setFilterProtocol(proto)}
+                                                            className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-all ${
+                                                                filterProtocol === proto
+                                                                ? 'bg-blue-500 text-white border-blue-500 shadow-lg shadow-blue-500/20'
+                                                                : 'bg-transparent border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:border-zinc-300 dark:hover:border-zinc-700'
+                                                            }`}
+                                                        >
+                                                            {proto}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Section 3: Tags */}
+                                            <div>
+                                                <div className="flex items-center justify-between mb-2.5">
+                                                    <label className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500 block">Tags</label>
+                                                    {activeTags.length > 0 && (
+                                                        <button 
+                                                            onClick={() => setActiveTags([])}
+                                                            className="text-[8px] font-bold uppercase text-red-500 hover:underline"
+                                                        >
+                                                            Clear Tags
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <Input
+                                                    size="sm"
+                                                    placeholder="Search tags..."
+                                                    value={tagSearch}
+                                                    onValueChange={setTagSearch}
+                                                    startContent={<Search className="w-3 h-3 text-zinc-400" />}
+                                                    className="mb-3 bg-zinc-50 dark:bg-zinc-900/50"
+                                                />
+                                                <ScrollShadow className="max-h-[180px] -mx-1 px-1">
+                                                    <div className="grid grid-cols-2 gap-1.5">
+                                                        {allTags.filter(t => t.toLowerCase().includes(tagSearch.toLowerCase())).map(tag => (
+                                                            <button
+                                                                key={tag}
+                                                                onClick={() => toggleTag(tag)}
+                                                                className={`flex items-center justify-between px-3 py-2 rounded-lg text-[10px] font-bold transition-all border ${
+                                                                    activeTags.includes(tag)
+                                                                    ? 'bg-zinc-900 dark:bg-zinc-100 text-zinc-100 dark:text-zinc-900 border-zinc-900 dark:border-zinc-100'
+                                                                    : 'bg-transparent text-zinc-500 border-transparent hover:bg-zinc-100 dark:hover:bg-zinc-900'
+                                                                }`}
+                                                            >
+                                                                <span>#{tag}</span>
+                                                                {activeTags.includes(tag) && <X className="w-2.5 h-2.5 opacity-50" />}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </ScrollShadow>
+                                            </div>
+                                        </div>
+                                        {(filterCategory !== 'all' || filterProtocol !== 'All' || activeTags.length > 0) && (
+                                            <div className="p-3 border-t border-zinc-200/50 dark:border-zinc-800/50 bg-zinc-50/50 dark:bg-zinc-900/30">
+                                                <Button 
+                                                    fullWidth 
+                                                    size="sm" 
+                                                    variant="flat" 
+                                                    color="danger"
+                                                    className="h-8 text-[9px] font-black uppercase tracking-widest"
+                                                    onClick={() => {
+                                                        setFilterCategory('all');
+                                                        setFilterProtocol('All');
+                                                        setActiveTags([]);
+                                                    }}
+                                                >
+                                                    Reset All Filters
+                                                </Button>
+                                            </div>
+                                        )}
+                                    </PopoverContent>
+                                </Popover>
+                                <DockIcon onClick={cameraForm.openAdd} className="bg-blue-500/10 border border-blue-500/20">
+                                    <Plus className="w-4 h-4 text-blue-500" />
+                                </DockIcon>
+                                <DockIcon onClick={() => setPrefs(prev => ({ ...prev, monitoringMode: !prev.monitoringMode }))}>
+                                    <Monitor className={cn("w-4 h-4 transition-colors", prefs.monitoringMode ? "text-blue-500" : "text-zinc-500")} />
+                                </DockIcon>
+                                <DockIcon onClick={() => setIsSingleColumnMobile(!isSingleColumnMobile)}>
+                                    {isSingleColumnMobile ? <Grid2X2 className="w-4 h-4 text-zinc-500" /> : <Square className="w-4 h-4 text-zinc-500" />}
+                                </DockIcon>
+                            </Dock>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+
                 {showMonitorToast && (
                     <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[70] bg-black/80 backdrop-blur-md text-white px-6 py-3 rounded-full shadow-2xl flex items-center animate-in fade-in slide-in-from-top-4 duration-300">
                         <span>Press <kbd className="bg-white/20 px-2 py-0.5 rounded text-sm mx-1 font-mono">Alt + M</kbd> or <kbd className="bg-white/20 px-2 py-0.5 rounded text-sm mx-1 font-mono">ESC</kbd> to exit.</span>
@@ -611,6 +821,6 @@ export default function App() {
                     isOpen={!!selectedCameraDetails}
                     onClose={() => setSelectedCameraDetails(null)}
                 />
-        </div>
-    );
+            </div>
+        );
 }

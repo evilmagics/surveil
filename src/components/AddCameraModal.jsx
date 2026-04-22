@@ -1,5 +1,5 @@
 import React from 'react';
-import { Loader2, AlertCircle, Wifi, Video as VideoIcon, ShieldCheck, Database, FileUp, FileDown, CheckCircle2, Zap } from 'lucide-react';
+import { Loader2, AlertCircle, Wifi, Video as VideoIcon, ShieldCheck, Database, FileUp, FileDown, CheckCircle2, Zap, Activity } from 'lucide-react';
 import { Input, Button, Chip } from '@heroui/react';
 import { SmartLabelInput } from './ui/SmartLabelInput';
 import { Dialog } from './ui/Dialog';
@@ -82,16 +82,29 @@ export function AddCameraModal({
                 <div className="space-y-1">
                   <div className="space-y-1">
                     <label className="text-zinc-900 dark:text-zinc-100 font-bold text-[10px] uppercase tracking-wider block ml-1">Stream Address</label>
-                    <Input
-                      size="sm"
-                      placeholder="rtsp://your-camera-ip:554/stream"
-                      value={formData.url}
-                      onChange={e => setFormData({ url: e.target.value })}
-                      variant="bordered"
-                      radius="xl"
-                      required
-                      className="w-full bg-zinc-50/50 dark:bg-zinc-900/30 border-zinc-200 dark:border-zinc-800 focus-within:border-blue-500 transition-colors rounded-xl overflow-hidden"
-                    />
+                    <div className="relative flex items-center group/input">
+                      <Input
+                        size="sm"
+                        placeholder="rtsp://your-camera-ip:554/stream"
+                        value={formData.url}
+                        onChange={e => setFormData({ url: e.target.value })}
+                        variant="bordered"
+                        radius="xl"
+                        required
+                        className="w-full bg-zinc-50/50 dark:bg-zinc-900/30 border-zinc-200 dark:border-zinc-800 focus-within:border-blue-500 transition-colors rounded-xl pr-10 sm:pr-0"
+                      />
+                      <Button
+                        isIconOnly
+                        size="sm"
+                        variant="solid"
+                        color="primary"
+                        onPress={checkConnection}
+                        disabled={!formData.url || isCheckingConn}
+                        className="max-sm:flex hidden absolute right-1.5 h-7 w-7 min-w-0 bg-blue-500 text-white shadow-lg active:scale-95 transition-all z-30"
+                      >
+                        {isCheckingConn ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Activity className="w-3.5 h-3.5" />}
+                      </Button>
+                    </div>
                     <p className="text-[10px] font-medium text-zinc-500 pt-0.5 ml-1">RTSP and standard HTTP streams only.</p>
                   </div>
                 </div>
@@ -141,7 +154,7 @@ export function AddCameraModal({
 
                     <div className="grid grid-cols-4 gap-2.5 pt-2 border-t border-zinc-200/50 dark:border-zinc-800/50">
                       <div className={`flex flex-col items-center p-2.5 rounded-xl transition-all duration-500 border ${formMetadata ? 'bg-blue-500/5 border-blue-500/10' : 'bg-zinc-50/50 dark:bg-zinc-900/50 border-transparent text-zinc-300 dark:text-zinc-600'}`}>
-                        <span className="text-[8px] font-black uppercase tracking-widest mb-1.5 opacity-60">Resolution</span>
+                        <span className="text-[8px] font-black uppercase tracking-widest mb-1.5 opacity-60">Res.</span>
                         <span className="text-[11px] font-black text-zinc-900 dark:text-zinc-100">{formMetadata?.resolution || '---'}</span>
                       </div>
                       <div className={`flex flex-col items-center p-2.5 rounded-xl transition-all duration-500 border ${formMetadata ? 'bg-blue-500/5 border-blue-500/10' : 'bg-zinc-50/50 dark:bg-zinc-900/50 border-transparent text-zinc-300 dark:text-zinc-600'}`}>
@@ -161,22 +174,22 @@ export function AddCameraModal({
                 </MagicCard>
 
                 {/* Action Buttons */}
-                <div className="flex items-center justify-between pt-4 pb-1 border-t border-zinc-100 dark:border-zinc-800/50 mt-4">
-                  <Button
-                    id="btn-test-connection"
-                    type="button"
-                    variant="flat"
-                    color="secondary"
-                    size="sm"
-                    radius="xl"
-                    onPress={checkConnection}
-                    disabled={!formData.url || isCheckingConn}
-                    startContent={isCheckingConn ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
-                    className="font-bold text-[10px] uppercase tracking-widest h-8 px-4"
-                  >
-                    Test Connection
-                  </Button>
+                <div className="flex items-center justify-between pt-4 pb-1 border-t border-zinc-100 dark:border-zinc-800/50 mt-4 px-1">
                   <div className="flex items-center gap-2">
+                    <Button
+                      id="btn-test-connection"
+                      type="button"
+                      variant="flat"
+                      color="secondary"
+                      size="sm"
+                      radius="xl"
+                      onPress={checkConnection}
+                      disabled={!formData.url || isCheckingConn}
+                      startContent={isCheckingConn ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Wifi className="w-3.5 h-3.5" />}
+                      className="hidden sm:flex font-bold text-[10px] uppercase tracking-widest h-8 px-4"
+                    >
+                      Test Connection
+                    </Button>
                     <Button
                       id="btn-cancel-single"
                       type="button"
@@ -188,21 +201,21 @@ export function AddCameraModal({
                     >
                       Cancel
                     </Button>
-                    <Button
-                      id="btn-add-single"
-                      type="button"
-                      color="primary"
-                      size="sm"
-                      onPress={saveCamera}
-                      radius="xl"
-                      className="font-bold text-[10px] uppercase tracking-widest shadow-lg shadow-blue-500/20 px-5 h-8 bg-blue-500 h-9"
-                      disabled={!formData.name || !formData.url || isCheckingConn}
-                      startContent={!isCheckingConn && <VideoIcon className="w-3.5 h-3.5" />}
-                    >
-                      {isCheckingConn && <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />}
-                      Add Source
-                    </Button>
                   </div>
+                  <Button
+                    id="btn-add-single"
+                    type="button"
+                    color="primary"
+                    size="sm"
+                    onPress={saveCamera}
+                    radius="xl"
+                    className="font-bold text-[10px] uppercase tracking-widest shadow-lg shadow-blue-500/20 px-6 h-9 bg-blue-500"
+                    disabled={!formData.name || !formData.url || isCheckingConn}
+                    startContent={!isCheckingConn && <VideoIcon className="w-3.5 h-3.5" />}
+                  >
+                    {isCheckingConn && <Loader2 className="w-3.5 h-3.5 mr-2 animate-spin" />}
+                    Add Source
+                  </Button>
                 </div>
               </div>
             </div>

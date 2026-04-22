@@ -13,7 +13,7 @@ export function CameraDetailsSidebar({ camera, isOpen, onClose }) {
       />
       <div className={`fixed top-0 right-0 h-full w-full sm:w-96 bg-white dark:bg-zinc-950 border-l border-zinc-200 dark:border-zinc-800 shadow-2xl z-50 transform transition-transform duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${isOpen ? 'translate-x-0' : 'translate-x-full'} overflow-y-auto`}>
         <div className="flex flex-col h-full">
-          <div className="flex items-center justify-between p-6 border-b border-zinc-200 dark:border-zinc-800">
+          <div className="flex items-center justify-between p-6 pt-10 sm:pt-6 border-b border-zinc-200 dark:border-zinc-800">
             <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-50 flex items-center">
               <Info className="w-5 h-5 mr-2 text-blue-500" /> Source Detail
             </h3>

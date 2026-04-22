@@ -1,6 +1,6 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { WifiOff, RefreshCw, Video, Monitor, Info, Edit, Trash2, Maximize, Star, Play, Pause } from 'lucide-react';
+import { WifiOff, RefreshCw, Video, Monitor, Info, Edit, Trash2, Maximize, Star, Play, Pause, MoreVertical } from 'lucide-react';
 import { invokeTauri, cn } from '../../lib/utils';
 import { LiveStreamVideo } from './LiveStreamVideo';
 import { Badge } from '../ui/Badge';
@@ -8,17 +8,26 @@ import { Button } from '../ui/Button';
 import { MagicCard } from '../ui/MagicCard';
 import { AnimatedBeam } from '../ui/AnimatedBeam';
 import { useCameraVolatileStore } from '../../store/cameraStore';
+import {
+    Dropdown,
+    DropdownMenu,
+    DropdownItem,
+    Button as HeroButton,
+    Label as HeroLabel,
+    DropdownPopover
+} from "@heroui/react";
 
 export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate, onDetail, prefs, onTheater }) => {
     const globalStatus = useCameraVolatileStore(state => state.cameraStatuses[camera.id]);
     const status = globalStatus || camera.status;
-    
+
     const [retryCount, setRetryCount] = useState(0);
     const [isReconnecting, setIsReconnecting] = useState(false);
     const [isPlaying, setIsPlaying] = useState(false);
-    const [isHalted, setIsHalted] = useState(true);
+    const [isHalted, setIsHalted] = useState(false);
     const [isPaused, setIsPaused] = useState(false);
-    
+    const [showMobileControls, setShowMobileControls] = useState(false);
+
     // refs for AnimatedBeam
     const containerRef = useRef(null);
     const sourceRef = useRef(null);
@@ -30,40 +39,25 @@ export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate,
     const cardRef = useRef(null);
     const videoRef = useRef(null);
     const haltTimerRef = useRef(null);
+    const controlsTimerRef = useRef(null);
     const hasEverPlayedRef = useRef(false);
 
     useEffect(() => {
-        const observer = new IntersectionObserver(
-            (entries) => {
-                const entry = entries[0];
-                if (entry.isIntersecting) {
-                    if (haltTimerRef.current) {
-                        clearTimeout(haltTimerRef.current);
-                        haltTimerRef.current = null;
-                    }
-                    setIsHalted(false);
-                } else {
-                    if (!haltTimerRef.current) {
-                        haltTimerRef.current = setTimeout(() => {
-                            setIsHalted(true);
-                            setIsPlaying(false);
-                            haltTimerRef.current = null;
-                        }, 3000); // Hard Teardown 3 detik
-                    }
-                }
-            },
-            { threshold: 0.1 }
-        );
-
-        if (cardRef.current) {
-            observer.observe(cardRef.current);
-        }
-
-        return () => {
-            if (haltTimerRef.current) clearTimeout(haltTimerRef.current);
-            observer.disconnect();
-        };
+        setIsHalted(false);
     }, []);
+
+    // Auto-hide mobile controls
+    useEffect(() => {
+        if (showMobileControls) {
+            if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+            controlsTimerRef.current = setTimeout(() => {
+                setShowMobileControls(false);
+            }, 4000); // Hide after 4 seconds
+        }
+        return () => {
+            if (controlsTimerRef.current) clearTimeout(controlsTimerRef.current);
+        };
+    }, [showMobileControls]);
 
     const handleReconnect = useCallback(async (isManual = false) => {
         if (isReconnecting) return;
@@ -125,7 +119,7 @@ export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate,
     }, [status, camera.id, onStateUpdate]);
 
     const handleFullscreen = (e) => {
-        e.stopPropagation();
+        if (e && e.stopPropagation) e.stopPropagation();
         if (!document.fullscreenElement) {
             videoRef.current?.requestFullscreen().catch(err => {
                 console.error(`Error attempting to enable fullscreen: ${err.message}`);
@@ -135,23 +129,23 @@ export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate,
         }
     };
 
-    const isFavorite = camera.labels.some(l => 
-        l.toLowerCase() === 'favorite' || 
-        l.toLowerCase() === 'favorites' || 
+    const isFavorite = camera.labels.some(l =>
+        l.toLowerCase() === 'favorite' ||
+        l.toLowerCase() === 'favorites' ||
         l.toLowerCase() === 'star'
     );
 
     const toggleFavorite = (e) => {
-        e.stopPropagation();
+        if (e && e.stopPropagation) e.stopPropagation();
         let newLabels = [...camera.labels];
         if (isFavorite) {
-            newLabels = newLabels.filter(l => 
+            newLabels = newLabels.filter(l =>
                 !['favorite', 'favorites', 'star'].includes(l.toLowerCase())
             );
         } else {
             newLabels.push('favorite');
         }
-        
+
         onStateUpdate(camera.id, status, { ...camera, labels: newLabels });
         // Trigger save to DB
         invokeTauri('update_camera', { id: camera.id, camera: { ...camera, labels: newLabels } })
@@ -167,15 +161,28 @@ export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate,
             style={{ animationDelay: `${index * 40}ms` }}
         >
             <div ref={cardRef} className="flex flex-col w-full h-full">
-            {/* Video Area */}
-            <div ref={videoRef} className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
-                {status === 'connected' ? (
-                    <>
-                        {isHalted ? (
-                            <div className="absolute inset-0 flex items-center justify-center bg-zinc-950 text-zinc-500 text-xs font-mono">
-                                VIEWPORT HALTED (Zzz...)
+                {/* Video Area */}
+                <div 
+                    ref={videoRef} 
+                    className="relative aspect-video bg-black flex items-center justify-center overflow-hidden cursor-pointer"
+                    onClick={() => {
+                        // Toggle controls on mobile
+                        if (window.innerWidth < 640) {
+                            setShowMobileControls(!showMobileControls);
+                        }
+                    }}
+                >
+                    {status === 'connected' ? (
+                        <>
+                            {/* Mobile Gradients Overlays */}
+                            <div className={cn(
+                                "absolute inset-0 pointer-events-none z-10 transition-opacity duration-300 sm:hidden",
+                                showMobileControls ? "opacity-100" : "opacity-0"
+                            )}>
+                                <div className="absolute top-0 left-0 right-0 h-16 bg-gradient-to-b from-black/60 to-transparent" />
+                                <div className="absolute bottom-0 left-0 right-0 h-16 bg-gradient-to-t from-black/60 to-transparent" />
                             </div>
-                        ) : (
+
                             <LiveStreamVideo
                                 index={index}
                                 key={streamKey}
@@ -186,254 +193,317 @@ export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate,
                                 onPlaying={handlePlaying}
                                 layoutId={`video-${camera.id}`}
                             />
-                        )}
 
-                        {!isPlaying && !isHalted && (
-                            /* ── Buffering state overlay (while connected but no frames yet) ── */
-                            <div ref={containerRef} className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/90 backdrop-blur-md z-20">
-                                <div className="absolute inset-0 bg-[linear-gradient(rgba(59,130,246,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(59,130,246,0.1)_1px,transparent_1px)] bg-[size:20px_20px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_10%,transparent_100%)] opacity-20 animate-pulse transition-all duration-1000"></div>
+                            {!isPlaying && !isHalted && (
+                                /* ── Buffering state overlay (while connected but no frames yet) ── */
+                                <div ref={containerRef} className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/90 backdrop-blur-md z-20">
+                                    <div className="absolute inset-0 bg-[linear-gradient(rgba(59,130,246,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(59,130,246,0.1)_1px,transparent_1px)] bg-[size:20px_20px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_10%,transparent_100%)] opacity-20 animate-pulse transition-all duration-1000"></div>
 
-                                <div className="flex items-center space-x-12 z-10 mb-4 transition-all duration-500">
-                                    <div ref={sourceRef} className="p-2 bg-zinc-900 rounded-xl border border-zinc-800 shadow-xl relative">
-                                        <Video className="w-6 h-6 text-zinc-400 opacity-80" />
-                                        <div className="absolute inset-0 border-2 border-blue-400 rounded-xl animate-ping opacity-20"></div>
+                                    <div className="flex items-center space-x-12 z-10 mb-4 transition-all duration-500">
+                                        <div ref={sourceRef} className="p-2 bg-zinc-900 rounded-xl border border-zinc-800 shadow-xl relative">
+                                            <Video className="w-6 h-6 text-zinc-400 opacity-80" />
+                                            <div className="absolute inset-0 border-2 border-blue-400 rounded-xl animate-ping opacity-20"></div>
+                                        </div>
+
+                                        <div ref={monitorRef} className="p-2 bg-zinc-900 rounded-xl border border-zinc-800 shadow-xl">
+                                            <Monitor className="w-6 h-6 text-blue-500 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+                                        </div>
                                     </div>
-
-                                    <div ref={monitorRef} className="p-2 bg-zinc-900 rounded-xl border border-zinc-800 shadow-xl">
-                                        <Monitor className="w-6 h-6 text-blue-500 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+                                    <AnimatedBeam
+                                        containerRef={containerRef}
+                                        fromRef={sourceRef}
+                                        toRef={monitorRef}
+                                        duration={2}
+                                        pathColor="#3b82f6"
+                                        gradientStartColor="#60a5fa"
+                                        gradientEndColor="#3b82f6"
+                                    />
+                                    <div className="z-10 flex flex-col items-center transition-all duration-500">
+                                        <span className="text-[10px] font-bold text-blue-400 uppercase tracking-[0.2em] drop-shadow-md mb-1 animate-pulse">
+                                            RECEIVING VIDEO FRAME
+                                        </span>
                                     </div>
                                 </div>
-                                <AnimatedBeam 
-                                    containerRef={containerRef}
-                                    fromRef={sourceRef}
-                                    toRef={monitorRef}
-                                    duration={2}
-                                    pathColor="#3b82f6"
-                                    gradientStartColor="#60a5fa"
-                                    gradientEndColor="#3b82f6"
-                                />
-                                <div className="z-10 flex flex-col items-center transition-all duration-500">
-                                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-[0.2em] drop-shadow-md mb-1 animate-pulse">
-                                        RECEIVING VIDEO FRAME
-                                    </span>
+                            )}
+
+                            {/* Top Left Badges (REC & Protocol & Metadata) */}
+                            <div className={cn(
+                                "absolute top-1.5 left-1.5 flex items-center space-x-1 z-10 transition-all duration-300",
+                                showMobileControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2 sm:translate-y-0 sm:opacity-100"
+                            )}>
+                                <div className="inline-flex items-center rounded bg-black/60 backdrop-blur-md border border-zinc-800/50 text-emerald-400 px-1 py-0 sm:px-1.5 sm:py-0.5 text-[8px] sm:text-[9px] font-bold tracking-wider shadow-[0_0_10px_rgba(16,185,129,0.3)] border-emerald-500/20">
+                                    <span className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse shadow-[0_0_5px_#10b981]"></span> REC
                                 </div>
-                            </div>
-                        )}
-                        
-                        {/* Top Left Badges (REC & Protocol & Metadata) */}
-                        <div className="absolute top-1.5 left-1.5 flex items-center space-x-1 z-10">
-                            <div className="inline-flex items-center rounded bg-black/60 backdrop-blur-md border border-zinc-800/50 text-emerald-400 px-1.5 py-0.5 text-[9px] font-bold tracking-wider shadow-sm">
-                                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500 mr-1 animate-pulse"></span> REC
-                            </div>
-                            {!prefs.monitoringMode && (
-                                <>
-                                    <div className="inline-flex items-center rounded bg-black/60 backdrop-blur-md border border-zinc-700/50 text-zinc-300 px-1.5 py-0.5 text-[9px] font-semibold opacity-0 group-hover:opacity-100 transition-opacity shadow-sm">
-                                        {camera.protocol}
-                                    </div>
-                                    <div className="flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                {!prefs.monitoringMode && (
+                                    <div className="hidden sm:flex items-center space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <div className="inline-flex items-center rounded bg-black/60 backdrop-blur-md border border-zinc-700/50 text-zinc-300 px-1.5 py-0.5 text-[9px] font-semibold shadow-sm">
+                                            {camera.protocol}
+                                        </div>
                                         <span className="bg-black/60 px-1 py-0.5 rounded border border-white/10 backdrop-blur-sm text-[8px] text-zinc-200 font-mono shadow-sm">{camera.fps} FPS</span>
                                         <span className="bg-black/60 px-1 py-0.5 rounded border border-white/10 backdrop-blur-sm text-[8px] text-zinc-200 font-mono shadow-sm">{camera.codec}</span>
                                         <span className="bg-black/60 px-1 py-0.5 rounded border border-white/10 backdrop-blur-sm text-[8px] text-zinc-200 font-mono shadow-sm">{camera.resolution}</span>
                                     </div>
+                                )}
+                            </div>
+
+                            {/* Top Right: Actions (Desktop: Favorite, Mobile: Dropdown) */}
+                            {!prefs.monitoringMode && (
+                                <div className={cn(
+                                    "absolute top-1.5 right-1.5 z-20 transition-all duration-300",
+                                    "sm:opacity-0 sm:group-hover:opacity-100",
+                                    showMobileControls ? "opacity-100 translate-y-0" : "opacity-0 -translate-y-2 sm:translate-y-0 sm:opacity-0 pointer-events-none sm:pointer-events-auto"
+                                )}>
+                                    {/* Desktop Favorite Button */}
+                                    <div className="hidden sm:block">
+                                        <button
+                                            onClick={toggleFavorite}
+                                            className={cn(
+                                                "p-1.5 transition-all duration-300 hover:scale-110",
+                                                isFavorite ? "text-yellow-400 drop-shadow-[0_0_8px_rgba(234,179,8,0.5)]" : "text-white/60 hover:text-blue-500"
+                                            )}
+                                        >
+                                            <Star className={cn("w-4 h-4", isFavorite && "fill-current")} />
+                                        </button>
+                                    </div>
+
+                                    {/* Mobile Actions Dropdown */}
+                                    <div className="sm:hidden flex items-center space-x-0.5" onClick={(e) => e.stopPropagation()}>
+                                        <HeroButton
+                                            isIconOnly
+                                            variant="light"
+                                            size="sm"
+                                            className="h-8 w-8 text-white/70 min-w-0 px-0 flex items-center justify-center cursor-pointer !bg-transparent border-none shadow-none hover:text-blue-500 transition-all"
+                                            onClick={() => onDetail(camera)}
+                                            title="Detail Source"
+                                        >
+                                            <Info className="w-4 h-4" />
+                                        </HeroButton>
+                                        <Dropdown>
+                                            <HeroButton
+                                                isIconOnly
+                                                variant="light"
+                                                size="sm"
+                                                className="h-8 w-8 text-white/70 min-w-0 px-0 flex items-center justify-center cursor-pointer !bg-transparent border-none shadow-none hover:text-blue-500 transition-all"
+                                            >
+                                                <MoreVertical className="w-4 h-4" />
+                                            </HeroButton>
+                                            <DropdownPopover>
+                                                <DropdownMenu
+                                                    aria-label="Camera Actions"
+                                                    className="p-2"
+                                                    onAction={(id) => {
+                                                        if (id === "edit") onEdit(camera);
+                                                        if (id === "favorite") toggleFavorite();
+                                                        if (id === "delete") onDelete(camera);
+                                                    }}
+                                                >
+                                                    <DropdownItem id="edit" textValue='Edit'>
+                                                        <Edit className="w-4 h-4" />
+                                                        <HeroLabel>Edit</HeroLabel>
+                                                    </DropdownItem>
+                                                    <DropdownItem id="favorite" textValue={isFavorite ? 'Unfavorite' : 'Favorite'}>
+                                                        <Star className={cn("w-4 h-4", isFavorite && "fill-current")} />
+                                                        <HeroLabel>{isFavorite ? 'Unfavorite' : 'Favorite'}</HeroLabel>
+                                                    </DropdownItem>
+                                                    <DropdownItem id="delete" className="text-danger" color="danger" textValue='Delete Camera'>
+                                                        <Trash2 className="w-4 h-4" />
+                                                        <HeroLabel>Delete Camera</HeroLabel>
+                                                    </DropdownItem>
+                                                </DropdownMenu>
+                                            </DropdownPopover>
+                                        </Dropdown>
+                                    </div>
+                                </div>
+                            )}
+
+                            {/* Pause/Play Button (Mobile: Bottom Left, Desktop: Bottom Center) */}
+                            {!prefs.monitoringMode && (
+                                <div className={cn(
+                                    "absolute bottom-1.5 left-1.5 sm:left-1/2 sm:-translate-x-1/2 transition-all duration-300 z-20",
+                                    "sm:opacity-0 sm:group-hover:opacity-100",
+                                    showMobileControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2 sm:translate-y-0 sm:opacity-0 pointer-events-none sm:pointer-events-auto"
+                                )}>
+                                    <button
+                                        onClick={(e) => { e.stopPropagation(); setIsPaused(!isPaused); }}
+                                        className="p-1.5 sm:p-2 text-white/70 hover:text-blue-500 transition-colors duration-300 bg-transparent border-none shadow-none rounded-full"
+                                    >
+                                        {isPaused ? <Play className="w-4 h-4 sm:w-5 sm:h-5 fill-current" /> : <Pause className="w-4 h-4 sm:w-5 sm:h-5 fill-current" />}
+                                    </button>
+                                </div>
+                            )}
+
+                            {/* Bottom Left: Actions (Desktop only) */}
+                            {!prefs.monitoringMode && (
+                                <div className="hidden sm:flex absolute bottom-1 left-1 items-center space-x-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                                    <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onDelete(camera); }} title="Delete Camera">
+                                        <Trash2 className="w-4 h-4" />
+                                    </Button>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onEdit(camera); }} title="Edit Camera">
+                                        <Edit className="w-4 h-4" />
+                                    </Button>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onDetail(camera); }} title="Detail Source">
+                                        <Info className="w-4 h-4" />
+                                    </Button>
+                                </div>
+                            )}
+
+                            {/* Bottom Right: Utility Actions (Mobile & Desktop) */}
+                            {!prefs.monitoringMode && (
+                                <div className={cn(
+                                    "flex absolute bottom-1 right-1 items-center space-x-0.5 transition-all duration-300 z-20",
+                                    "sm:opacity-0 sm:group-hover:opacity-100",
+                                    showMobileControls ? "opacity-100 translate-y-0" : "opacity-0 translate-y-2 sm:translate-y-0 sm:opacity-0 pointer-events-none sm:pointer-events-auto"
+                                )}>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); handleReconnect(true); }} disabled={isReconnecting} title="Reload Stream">
+                                        <RefreshCw className={`w-4 h-4 ${isReconnecting ? 'animate-spin text-blue-500' : ''}`} />
+                                    </Button>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onTheater(camera); }} title="Theater Mode">
+                                        <Monitor className="w-4 h-4" />
+                                    </Button>
+                                    <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={handleFullscreen} title="Fullscreen">
+                                        <Maximize className="w-4 h-4" />
+                                    </Button>
+                                </div>
+                            )}
+                        </>
+                    ) : (
+                        /* ── Offline / Reconnecting overlay ─────────────────────────────── */
+                        <div className="flex flex-col items-center justify-center w-full h-full bg-zinc-950/90 backdrop-blur-md relative overflow-hidden">
+
+                            {/* Animated signal wave background */}
+                            <div className={`absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-1000 ${status === 'reconnecting' || status === 'connecting' ? 'opacity-30' : 'opacity-20'}`}>
+                                <svg className="w-full h-24" viewBox="0 0 200 50" preserveAspectRatio="none">
+                                    <path className="animate-[dash_1.5s_linear_infinite]" stroke="url(#sigGrad)" strokeWidth="1" fill="none" strokeDasharray="10 5" strokeDashoffset="0" d="M 0 25 Q 50 5 100 25 T 200 25" />
+                                    <defs>
+                                        <linearGradient id="sigGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                                            <stop offset="0%" stopColor={status === 'reconnecting' || status === 'connecting' ? "#3b82f6" : "#ef4444"} stopOpacity="0" />
+                                            <stop offset="50%" stopColor={status === 'reconnecting' || status === 'connecting' ? "#60a5fa" : "#f87171"} stopOpacity="1" />
+                                            <stop offset="100%" stopColor={status === 'reconnecting' || status === 'connecting' ? "#3b82f6" : "#ef4444"} stopOpacity="0" />
+                                        </linearGradient>
+                                    </defs>
+                                </svg>
+                            </div>
+
+                            {/* Animated grid lines */}
+                            <div className={`absolute inset-0 bg-[size:20px_20px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_10%,transparent_100%)] transition-all duration-1000 ${status === 'reconnecting' || status === 'connecting' ? 'bg-[linear-gradient(rgba(59,130,246,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(59,130,246,0.1)_1px,transparent_1px)] opacity-20 animate-pulse' : 'bg-[linear-gradient(rgba(239,68,68,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(239,68,68,0.1)_1px,transparent_1px)] opacity-10'}`}></div>
+
+                            {status === 'reconnecting' || status === 'connecting' ? (
+                                /* ── Reconnecting state: same animated nodes as before ── */
+                                <>
+                                    <div className="flex items-center space-x-5 z-10 mb-4 transition-all duration-500">
+                                        <div className="relative">
+                                            <Video className="w-6 h-6 text-zinc-400 opacity-50" />
+                                            <div className="absolute inset-0 border-2 border-blue-400 rounded-full animate-ping opacity-30"></div>
+                                        </div>
+                                        <div className="flex space-x-1.5 w-16 justify-center">
+                                            <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                                            <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                                            <div className="w-1.5 h-1.5 bg-blue-300 rounded-full animate-bounce"></div>
+                                        </div>
+                                        <Monitor className="w-6 h-6 text-blue-500 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
+                                    </div>
+                                    <div className="z-10 flex flex-col items-center transition-all duration-500">
+                                        <span className="text-xs font-bold text-blue-400 uppercase tracking-widest drop-shadow-md mb-1">
+                                            {status === 'connecting' ? 'Establishing Context' : 'Restoring Signal'}
+                                        </span>
+                                        {status === 'reconnecting' && <span className="text-[10px] text-blue-200/70 font-mono">Attempt {retryCount}/5</span>}
+                                    </div>
+                                </>
+                            ) : (
+                                /* ── Disconnected state ───────────────────────────────────── */
+                                <>
+                                    <div className="flex items-center space-x-5 z-10 mb-4 transition-all duration-500">
+                                        <div className="relative">
+                                            <Video className="w-6 h-6 text-zinc-500 opacity-50" />
+                                        </div>
+                                        <div className="flex justify-center items-center w-16">
+                                            <WifiOff className="w-6 h-6 text-red-500 drop-shadow-[0_0_8px_rgba(239,68,68,0.5)] transition-all duration-500" />
+                                        </div>
+                                        <Monitor className="w-6 h-6 text-red-500 drop-shadow-[0_0_8px_rgba(239,68,68,0.5)] opacity-80" />
+                                    </div>
+                                    <div className="z-10 flex flex-col items-center transition-all duration-500">
+                                        <span className="text-xs font-bold text-red-500 uppercase tracking-widest drop-shadow-md mb-2">
+                                            DISCONNECTED
+                                        </span>
+                                        {retryCount >= 5 && (
+                                            <span className="text-[10px] text-red-400/50 mb-3 font-mono">Max retries reached</span>
+                                        )}
+                                    </div>
                                 </>
                             )}
                         </div>
+                    )}
 
-                        {/* Top Right: Favorite Button */}
-                        {!prefs.monitoringMode && (
-                            <div className="absolute top-1.5 right-1.5 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                                <button 
-                                    onClick={toggleFavorite}
-                                    className={cn(
-                                        "p-1.5 transition-all duration-300 hover:scale-110",
-                                        isFavorite ? "text-yellow-400 drop-shadow-[0_0_8px_rgba(234,179,8,0.5)]" : "text-white/60 hover:text-blue-500"
+                    {/* Bottom Gradient Overlay */}
+                    {!prefs.monitoringMode && (
+                        <div className="absolute bottom-0 inset-x-0 h-16 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-0"></div>
+                    )}
+                </div>
+
+                {/* Info Area */}
+                <AnimatePresence mode="popLayout" initial={false}>
+                    {(prefs.showName || prefs.showSource || prefs.showTags) && (
+                        <motion.div
+                            initial={{ opacity: 0, height: 0 }}
+                            animate={{ opacity: 1, height: 'auto' }}
+                            exit={{ opacity: 0, height: 0 }}
+                            transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                            className="p-4 flex-1 flex flex-col justify-between overflow-hidden"
+                        >
+                            <div>
+                                <AnimatePresence mode="popLayout">
+                                    {prefs.showName && (
+                                        <motion.div
+                                            initial={{ opacity: 0, y: -5 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: -5 }}
+                                            className="flex items-start justify-between"
+                                        >
+                                            <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 truncate pr-2">{camera.name}</h3>
+                                            <div className="flex items-center space-x-1">
+                                                {(status === 'disconnected' || status === 'reconnecting') && (
+                                                    <Button variant="ghost" size="icon" className="h-7 w-7 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100" onClick={() => handleReconnect(true)} disabled={isReconnecting} title="Manual Reconnect">
+                                                        <RefreshCw className={`w-4 h-4 ${isReconnecting ? 'animate-spin' : ''}`} />
+                                                    </Button>
+                                                )}
+                                            </div>
+                                        </motion.div>
                                     )}
-                                >
-                                    <Star className={cn("w-4 h-4", isFavorite && "fill-current")} />
-                                </button>
-                            </div>
-                        )}
+                                </AnimatePresence>
 
-                        {/* Bottom Center: Pause/Play Button */}
-                        {!prefs.monitoringMode && (
-                            <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all duration-300 z-20">
-                                <button
-                                    onClick={(e) => { e.stopPropagation(); setIsPaused(!isPaused); }}
-                                    className="p-2 text-white/60 hover:text-blue-500 transition-colors duration-300"
-                                >
-                                    {isPaused ? <Play className="w-5 h-5 fill-current" /> : <Pause className="w-5 h-5 fill-current" />}
-                                </button>
-                            </div>
-                        )}
-
-                        {/* Bottom Left: Actions (Delete, Edit, Detail) */}
-                        {!prefs.monitoringMode && (
-                            <div className="absolute bottom-1 left-1 flex items-center space-x-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                                <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onDelete(camera); }} title="Delete Camera">
-                                    <Trash2 className="w-4 h-4" />
-                                </Button>
-                                <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onEdit(camera); }} title="Edit Camera">
-                                    <Trash2 className="w-4 h-4" />
-                                </Button>
-                                <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onDetail(camera); }} title="Detail Source">
-                                    <Info className="w-4 h-4" />
-                                </Button>
-                            </div>
-                        )}
-
-                        {/* Bottom Right: Utility Actions */}
-                        {!prefs.monitoringMode && (
-                            <div className="absolute bottom-1 right-1 flex items-center space-x-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                                <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); handleReconnect(true); }} disabled={isReconnecting} title="Reload Stream">
-                                    <RefreshCw className={`w-4 h-4 ${isReconnecting ? 'animate-spin text-blue-500' : ''}`} />
-                                </Button>
-                                <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onTheater(camera); }} title="Theater Mode">
-                                    <Monitor className="w-4 h-4" />
-                                </Button>
-                                <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={handleFullscreen} title="Fullscreen">
-                                    <Maximize className="w-4 h-4" />
-                                </Button>
-                            </div>
-                        )}
-                    </>
-                ) : (
-                    /* ── Offline / Reconnecting overlay ─────────────────────────────── */
-                    <div className="flex flex-col items-center justify-center w-full h-full bg-zinc-950/90 backdrop-blur-md relative overflow-hidden">
-
-                        {/* Animated signal wave background */}
-                        <div className={`absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-1000 ${status === 'reconnecting' || status === 'connecting' ? 'opacity-30' : 'opacity-20'}`}>
-                            <svg className="w-full h-24" viewBox="0 0 200 50" preserveAspectRatio="none">
-                                <path className="animate-[dash_1.5s_linear_infinite]" stroke="url(#sigGrad)" strokeWidth="1" fill="none" strokeDasharray="10 5" strokeDashoffset="0" d="M 0 25 Q 50 5 100 25 T 200 25" />
-                                <defs>
-                                    <linearGradient id="sigGrad" x1="0%" y1="0%" x2="100%" y2="0%">
-                                        <stop offset="0%" stopColor={status === 'reconnecting' || status === 'connecting' ? "#3b82f6" : "#ef4444"} stopOpacity="0" />
-                                        <stop offset="50%" stopColor={status === 'reconnecting' || status === 'connecting' ? "#60a5fa" : "#f87171"} stopOpacity="1" />
-                                        <stop offset="100%" stopColor={status === 'reconnecting' || status === 'connecting' ? "#3b82f6" : "#ef4444"} stopOpacity="0" />
-                                    </linearGradient>
-                                </defs>
-                            </svg>
-                        </div>
-
-                        {/* Animated grid lines */}
-                        <div className={`absolute inset-0 bg-[size:20px_20px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_10%,transparent_100%)] transition-all duration-1000 ${status === 'reconnecting' || status === 'connecting' ? 'bg-[linear-gradient(rgba(59,130,246,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(59,130,246,0.1)_1px,transparent_1px)] opacity-20 animate-pulse' : 'bg-[linear-gradient(rgba(239,68,68,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(239,68,68,0.1)_1px,transparent_1px)] opacity-10'}`}></div>
-
-                        {status === 'reconnecting' || status === 'connecting' ? (
-                            /* ── Reconnecting state: same animated nodes as before ── */
-                            <>
-                                <div className="flex items-center space-x-5 z-10 mb-4 transition-all duration-500">
-                                    <div className="relative">
-                                        <Video className="w-6 h-6 text-zinc-400 opacity-50" />
-                                        <div className="absolute inset-0 border-2 border-blue-400 rounded-full animate-ping opacity-30"></div>
-                                    </div>
-                                    <div className="flex space-x-1.5 w-16 justify-center">
-                                        <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                                        <div className="w-1.5 h-1.5 bg-blue-300 rounded-full animate-bounce"></div>
-                                    </div>
-                                    <Monitor className="w-6 h-6 text-blue-500 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
-                                </div>
-                                <div className="z-10 flex flex-col items-center transition-all duration-500">
-                                    <span className="text-xs font-bold text-blue-400 uppercase tracking-widest drop-shadow-md mb-1">
-                                        {status === 'connecting' ? 'Establishing Context' : 'Restoring Signal'}
-                                    </span>
-                                    {status === 'reconnecting' && <span className="text-[10px] text-blue-200/70 font-mono">Attempt {retryCount}/5</span>}
-                                </div>
-                            </>
-                        ) : (
-                            /* ── Disconnected state ───────────────────────────────────── */
-                            <>
-                                <div className="flex items-center space-x-5 z-10 mb-4 transition-all duration-500">
-                                    <div className="relative">
-                                        <Video className="w-6 h-6 text-zinc-500 opacity-50" />
-                                    </div>
-                                    <div className="flex justify-center items-center w-16">
-                                        <WifiOff className="w-6 h-6 text-red-500 drop-shadow-[0_0_8px_rgba(239,68,68,0.5)] transition-all duration-500" />
-                                    </div>
-                                    <Monitor className="w-6 h-6 text-red-500 drop-shadow-[0_0_8px_rgba(239,68,68,0.5)] opacity-80" />
-                                </div>
-                                <div className="z-10 flex flex-col items-center transition-all duration-500">
-                                    <span className="text-xs font-bold text-red-500 uppercase tracking-widest drop-shadow-md mb-2">
-                                        DISCONNECTED
-                                    </span>
-                                    {retryCount >= 5 && (
-                                        <span className="text-[10px] text-red-400/50 mb-3 font-mono">Max retries reached</span>
+                                <AnimatePresence mode="popLayout">
+                                    {prefs.showSource && (
+                                        <motion.p
+                                            initial={{ opacity: 0, y: -5 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: -5 }}
+                                            className={`text-xs text-zinc-500 truncate ${prefs.showName ? 'mt-1' : ''}`}
+                                            title={camera.url}
+                                        >
+                                            {camera.url}
+                                        </motion.p>
                                     )}
-                                </div>
-                            </>
-                        )}
-                    </div>
-                )}
+                                </AnimatePresence>
 
-                {/* Bottom Gradient Overlay */}
-                {!prefs.monitoringMode && (
-                    <div className="absolute bottom-0 inset-x-0 h-16 bg-gradient-to-t from-black/80 via-black/20 to-transparent opacity-0 group-hover:opacity-100 transition-opacity pointer-events-none z-0"></div>
-                )}
+                                <AnimatePresence mode="popLayout">
+                                    {prefs.showTags && camera.labels.length > 0 && (
+                                        <motion.div
+                                            initial={{ opacity: 0, y: -5 }}
+                                            animate={{ opacity: 1, y: 0 }}
+                                            exit={{ opacity: 0, y: -5 }}
+                                            className={`flex flex-wrap gap-1 ${prefs.showName || prefs.showSource ? 'mt-3' : ''}`}
+                                        >
+                                            {camera.labels.map((lbl, idx) => (
+                                                <Badge key={idx} variant="secondary" className="text-[10px]">{lbl}</Badge>
+                                            ))}
+                                        </motion.div>
+                                    )}
+                                </AnimatePresence>
+                            </div>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
             </div>
-
-            {/* Info Area */}
-            <AnimatePresence mode="popLayout" initial={false}>
-                {(prefs.showName || prefs.showSource || prefs.showTags) && (
-                    <motion.div 
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: 'auto' }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
-                        className="p-4 flex-1 flex flex-col justify-between overflow-hidden"
-                    >
-                        <div>
-                            <AnimatePresence mode="popLayout">
-                                {prefs.showName && (
-                                    <motion.div 
-                                        initial={{ opacity: 0, y: -5 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, y: -5 }}
-                                        className="flex items-start justify-between"
-                                    >
-                                        <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 truncate pr-2">{camera.name}</h3>
-                                        <div className="flex items-center space-x-1">
-                                            {(status === 'disconnected' || status === 'reconnecting') && (
-                                                <Button variant="ghost" size="icon" className="h-7 w-7 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100" onClick={() => handleReconnect(true)} disabled={isReconnecting} title="Manual Reconnect">
-                                                    <RefreshCw className={`w-4 h-4 ${isReconnecting ? 'animate-spin' : ''}`} />
-                                                </Button>
-                                            )}
-                                        </div>
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
-
-                            <AnimatePresence mode="popLayout">
-                                {prefs.showSource && (
-                                    <motion.p 
-                                        initial={{ opacity: 0, y: -5 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, y: -5 }}
-                                        className={`text-xs text-zinc-500 truncate ${prefs.showName ? 'mt-1' : ''}`} 
-                                        title={camera.url}
-                                    >
-                                        {camera.url}
-                                    </motion.p>
-                                )}
-                            </AnimatePresence>
-
-                            <AnimatePresence mode="popLayout">
-                                {prefs.showTags && camera.labels.length > 0 && (
-                                    <motion.div 
-                                        initial={{ opacity: 0, y: -5 }}
-                                        animate={{ opacity: 1, y: 0 }}
-                                        exit={{ opacity: 0, y: -5 }}
-                                        className={`flex flex-wrap gap-1 ${prefs.showName || prefs.showSource ? 'mt-3' : ''}`}
-                                    >
-                                        {camera.labels.map((lbl, idx) => (
-                                            <Badge key={idx} variant="secondary" className="text-[10px]">{lbl}</Badge>
-                                        ))}
-                                    </motion.div>
-                                )}
-                            </AnimatePresence>
-                        </div>
-                    </motion.div>
-                )}
-            </AnimatePresence>
-        </div>
         </MagicCard>
     );
 };
