@@ -133,10 +133,11 @@ export function PreferencesMenu({ prefs, setPrefs, setPage }) {
                                     </div>
                                     <Select.Popover>
                                         <ListBox className="p-1 outline-none bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-lg shadow-xl min-w-[200px]">
-                                            <ListBox.Item id="8" className="px-3 py-2 text-sm rounded-md hover:bg-blue-500 hover:text-white cursor-pointer outline-none">8 Items</ListBox.Item>
                                             <ListBox.Item id="12" className="px-3 py-2 text-sm rounded-md hover:bg-blue-500 hover:text-white cursor-pointer outline-none">12 Items</ListBox.Item>
                                             <ListBox.Item id="24" className="px-3 py-2 text-sm rounded-md hover:bg-blue-500 hover:text-white cursor-pointer outline-none">24 Items</ListBox.Item>
+                                            <ListBox.Item id="36" className="px-3 py-2 text-sm rounded-md hover:bg-blue-500 hover:text-white cursor-pointer outline-none">36 Items</ListBox.Item>
                                             <ListBox.Item id="48" className="px-3 py-2 text-sm rounded-md hover:bg-blue-500 hover:text-white cursor-pointer outline-none">48 Items</ListBox.Item>
+                                            <ListBox.Item id="60" className="px-3 py-2 text-sm rounded-md hover:bg-blue-500 hover:text-white cursor-pointer outline-none">60 Items</ListBox.Item>
                                         </ListBox>
                                     </Select.Popover>
                                 </Select>
