@@ -59,9 +59,24 @@ function extractFile(filePath, extractDir) {
     if (!fs.existsSync(extractDir)) {
         fs.mkdirSync(extractDir, { recursive: true });
     }
-    // Using Windows 10+ / Linux / macOS built-in tar command 
-    // Works for both .zip and .tar.gz in modern OSes
-    execSync(`tar -xf "${filePath}" -C "${extractDir}"`, { stdio: 'inherit' });
+    
+    // On Windows, 'tar' might interpret drive letters (e.g., D:) as remote hosts.
+    // We use --force-local for GNU tar or ensure paths are handled correctly.
+    try {
+        if (process.platform === 'win32') {
+            // Use PowerShell's Expand-Archive for .zip files on Windows for better reliability
+            if (filePath.endsWith('.zip')) {
+                execSync(`powershell -Command "Expand-Archive -Path '${filePath}' -DestinationPath '${extractDir}' -Force"`, { stdio: 'inherit' });
+            } else {
+                execSync(`tar --force-local -xf "${filePath}" -C "${extractDir}"`, { stdio: 'inherit' });
+            }
+        } else {
+            execSync(`tar -xf "${filePath}" -C "${extractDir}"`, { stdio: 'inherit' });
+        }
+    } catch (e) {
+        // Fallback to standard tar if --force-local is not supported (bsdtar)
+        execSync(`tar -xf "${filePath}" -C "${extractDir}"`, { stdio: 'inherit' });
+    }
 }
 
 async function main() {
