@@ -1,14 +1,15 @@
 import { useState, useRef, useCallback } from 'react';
 import { invokeTauri } from '../lib/utils';
+import { toast as addToast } from '@heroui/react/toast';
 
 export function useCameraForm(cameras, onSuccess) {
-    const [isAddModalOpen, setIsAddModalOpen] = useState(false);
+    const [isOpen, setIsOpen] = useState(false);
     const [editingCamera, setEditingCamera] = useState(null);
     const [formData, setFormData] = useState({ name: '', url: '', labels: [] });
     const [formMetadata, setFormMetadata] = useState(null);
     const [isCheckingConn, setIsCheckingConn] = useState(false);
     const [connError, setConnError] = useState('');
-    const [activeAddTab, setActiveAddTab] = useState('single');
+    const [activeAddTab, setActiveAddTab] = useState('tab-single');
     const [isDragging, setIsDragging] = useState(false);
     const [isBatchLoading, setIsBatchLoading] = useState(false);
     const [batchPreview, setBatchPreview] = useState([]);
@@ -36,7 +37,8 @@ export function useCameraForm(cameras, onSuccess) {
         setConnError('');
         setBatchPreview([]);
         setBatchResults(null);
-        setIsAddModalOpen(true);
+        setActiveAddTab('tab-single');
+        setIsOpen(true);
     };
 
     const openEdit = (camera) => {
@@ -46,7 +48,19 @@ export function useCameraForm(cameras, onSuccess) {
             resolution: camera.resolution, codec: camera.codec, protocol: camera.protocol, fps: camera.fps
         });
         setConnError('');
-        setIsAddModalOpen(true);
+        setIsOpen(true);
+    };
+
+    const updateFormData = (updates) => {
+        setFormData(prev => {
+            const next = { ...prev, ...updates };
+            // Clear metadata if URL changes to avoid showing stale data for a new address
+            if (updates.url !== undefined && updates.url !== prev.url) {
+                setFormMetadata(null);
+                setConnError('');
+            }
+            return next;
+        });
     };
 
     const checkConnection = async () => {
@@ -56,9 +70,17 @@ export function useCameraForm(cameras, onSuccess) {
         try {
             const metadata = await invokeTauri('check_connection', { url: formData.url });
             setFormMetadata(metadata);
+            addToast("Connectivity Check", {
+                description: `Successfully reached ${getHostAndPort(formData.url)}. Metadata retrieved.`,
+                variant: "success"
+            });
         } catch (e) {
             setConnError(e.toString());
             setFormMetadata(null);
+            addToast("Connection Failed", {
+                description: e.toString(),
+                variant: "danger"
+            });
         } finally {
             setIsCheckingConn(false);
         }
@@ -68,13 +90,16 @@ export function useCameraForm(cameras, onSuccess) {
         if (!formData.name || !formData.url) return;
 
         if (isDuplicate(formData.url, editingCamera?.id)) {
-            setConnError("A camera with this IP/Host and Port is already registered.");
+            const msg = "A camera with this IP/Host and Port is already registered.";
+            setConnError(msg);
+            addToast("Validation Error", { description: msg, variant: "warning" });
             return;
         }
 
         setIsCheckingConn(true);
         let finalMetadata = null;
         try {
+            // Force connection check to get latest metadata if not already present or as final verification
             finalMetadata = await invokeTauri('check_connection', { url: formData.url });
         } catch (e) {
             console.warn("Auto-metadata fetch failed during save, using offline defaults:", e);
@@ -99,23 +124,35 @@ export function useCameraForm(cameras, onSuccess) {
         try {
             if (editingCamera) {
                 await invokeTauri('update_camera', { id: editingCamera.id, camera: payload });
+                addToast("Registry Updated", { description: `${formData.name} has been modified successfully.`, variant: "success" });
             } else {
                 await invokeTauri('add_camera', { camera: payload });
+                addToast("Source Added", { description: `${formData.name} is now in the registry.`, variant: "success" });
             }
-            setIsAddModalOpen(false);
+            setIsOpen(false);
             if (onSuccess) onSuccess();
         } catch (e) {
-            setConnError("Failed to save to database.");
+            const errorMsg = "Failed to save to database.";
+            setConnError(errorMsg);
+            addToast("Database Error", { description: errorMsg, variant: "danger" });
         }
     };
 
     const handleBatchImport = async (e) => {
-        const file = e.target.files?.[0];
+        let file;
+        if (e.target && e.target.files) {
+            file = e.target.files[0];
+        } else if (e.dataTransfer && e.dataTransfer.files) {
+            file = e.dataTransfer.files[0];
+        }
+        
         if (!file) return;
 
         const ext = file.name.split('.').pop().toLowerCase();
         if (ext !== 'json' && ext !== 'csv') {
-            setConnError("Invalid file type. Only JSON and CSV files are allowed.");
+            const typeError = "Invalid file type. Only JSON and CSV files are allowed.";
+            setConnError(typeError);
+            addToast("Unsupported File", { description: typeError, variant: "danger" });
             if (fileInputRef.current) fileInputRef.current.value = "";
             return;
         }
@@ -132,11 +169,6 @@ export function useCameraForm(cameras, onSuccess) {
                         name: c.name || "Unnamed Camera",
                         url: c.url || "",
                         labels: c.labels || [],
-                        status: "disconnected",
-                        resolution: "Unknown",
-                        codec: "Unknown",
-                        fps: 0,
-                        protocol: "Unknown"
                     }));
                 } else if (ext === 'csv') {
                     const lines = text.split('\n').filter(l => l.trim());
@@ -146,7 +178,9 @@ export function useCameraForm(cameras, onSuccess) {
                     const labelsIdx = headers.indexOf('labels');
                     
                     if (nameIdx === -1 || urlIdx === -1) {
-                        setConnError("CSV must contain 'name' and 'url' headers.");
+                        const csvError = "CSV must contain 'name' and 'url' headers.";
+                        setConnError(csvError);
+                        addToast("Import Failed", { description: csvError, variant: "danger" });
                         setIsBatchLoading(false);
                         return;
                     }
@@ -160,26 +194,42 @@ export function useCameraForm(cameras, onSuccess) {
                             labels = row[labelsIdx].split(';').map(l => l.trim()).filter(l => l);
                         }
                         if (name && url) {
-                            camerasToAdd.push({ 
-                                name, url, labels, 
-                                status: "disconnected",
-                                resolution: "Unknown", 
-                                codec: "Unknown", 
-                                fps: 0, 
-                                protocol: "Unknown" 
-                            });
+                            camerasToAdd.push({ name, url, labels });
                         }
                     }
                 }
                 
-                setBatchPreview(camerasToAdd.map(c => ({
+                // Add initial state with testing status
+                const previewWithStatus = camerasToAdd.map(c => ({
                     ...c,
-                    isDuplicate: isDuplicate(c.url)
-                })));
+                    isDuplicate: isDuplicate(c.url),
+                    connectionStatus: 'testing',
+                    metadata: null
+                }));
+                setBatchPreview(previewWithStatus);
+
+                // Run batch connection tests in parallel (limited)
+                const results = await Promise.all(previewWithStatus.map(async (c) => {
+                    if (c.isDuplicate) return { ...c, connectionStatus: 'skipped' };
+                    try {
+                        const meta = await invokeTauri('check_connection', { url: c.url });
+                        return { ...c, connectionStatus: 'online', metadata: meta };
+                    } catch {
+                        return { ...c, connectionStatus: 'offline', metadata: null };
+                    }
+                }));
+
+                setBatchPreview(results);
                 setConnError("");
+                addToast("Manifest Analyzed", {
+                    description: `Found ${results.length} cameras. Ready for registry inclusion.`,
+                    variant: "primary"
+                });
             } catch (err) {
                 console.error("Batch parse failed", err);
-                setConnError("Failed to parse file. Ensure it's valid.");
+                const parseError = "Failed to parse file. Ensure it's valid JSON or CSV.";
+                setConnError(parseError);
+                addToast("Parsing Error", { description: parseError, variant: "danger" });
             } finally {
                 setIsBatchLoading(false);
                 if (fileInputRef.current) fileInputRef.current.value = "";
@@ -188,7 +238,7 @@ export function useCameraForm(cameras, onSuccess) {
         reader.readAsText(file);
     };
 
-    const saveBatch = async () => {
+    const saveBatch = async (includeFailed = false) => {
         if (batchPreview.length === 0) return;
         setIsBatchLoading(true);
         let added = 0;
@@ -196,34 +246,57 @@ export function useCameraForm(cameras, onSuccess) {
 
         try {
             for (const cam of batchPreview) {
-                if (!cam.isDuplicate) {
-                    let batchMetadata = {
-                        status: "offline",
-                        resolution: "Unknown",
-                        codec: "Unknown",
-                        fps: 0,
-                        protocol: "Unknown"
-                    };
-
-                    try {
-                        const meta = await invokeTauri('check_connection', { url: cam.url });
-                        batchMetadata = meta;
-                    } catch (e) {
-                        console.warn(`Batch metadata fetch failed for ${cam.name}:`, e);
-                    }
-
-                    const finalCam = { ...cam, ...batchMetadata };
-                    await invokeTauri('add_camera', { camera: finalCam });
-                    added++;
-                } else {
+                const isConflict = cam.isDuplicate;
+                const isOnline = cam.connectionStatus === 'online';
+                
+                if (isConflict) {
                     skipped++;
+                    continue;
                 }
+
+                if (!includeFailed && !isOnline) {
+                    continue;
+                }
+
+                // Metadata is already fetched during handleBatchImport (preview phase)
+                let finalMetadata = cam.metadata;
+                
+                // If it was offline or metadata is missing, we try one last check or use defaults
+                if (!finalMetadata) {
+                    try {
+                        finalMetadata = await invokeTauri('check_connection', { url: cam.url });
+                    } catch {
+                        finalMetadata = {
+                            status: "offline",
+                            resolution: "Unknown",
+                            codec: "Unknown",
+                            fps: 0,
+                            protocol: "Unknown"
+                        };
+                    }
+                }
+
+                const payload = {
+                    name: cam.name,
+                    url: cam.url,
+                    labels: cam.labels,
+                    ...finalMetadata
+                };
+
+                await invokeTauri('add_camera', { camera: payload });
+                added++;
             }
             if (onSuccess) await onSuccess();
             setBatchResults({ added, skipped });
             setBatchPreview([]);
+            addToast("Import Complete", {
+                description: `Successfully added ${added} new sources.`,
+                variant: "success"
+            });
         } catch (e) {
-            setConnError(`Database Error: ${e.toString()}`);
+            const err = `Database Error: ${e.toString()}`;
+            setConnError(err);
+            addToast("Import Critical Error", { description: err, variant: "danger" });
             console.error("Batch Import Failed:", e);
         } finally {
             setIsBatchLoading(false);
@@ -245,15 +318,17 @@ export function useCameraForm(cameras, onSuccess) {
         
         try {
             await invokeTauri('save_template_file', { content, filename });
+            addToast("Template Saved", { description: `${filename} is ready in your downloads.`, variant: "primary" });
         } catch (e) {
+            addToast("Download Failed", { description: "Could not save template to disk.", variant: "danger" });
             console.error("Failed to save template file:", e);
         }
     };
 
     return {
-        isAddModalOpen, setIsAddModalOpen,
+        isOpen, setIsOpen,
         editingCamera,
-        formData, setFormData,
+        formData, setFormData: updateFormData,
         formMetadata,
         isCheckingConn,
         connError, setConnError,

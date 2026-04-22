@@ -1,9 +1,12 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
+import { motion, AnimatePresence } from 'framer-motion';
 import { WifiOff, RefreshCw, Video, Monitor, Info, Edit, Trash2, Maximize } from 'lucide-react';
-import { invokeTauri } from '../../lib/utils';
+import { invokeTauri, cn } from '../../lib/utils';
 import { LiveStreamVideo } from './LiveStreamVideo';
 import { Badge } from '../ui/Badge';
 import { Button } from '../ui/Button';
+import { MagicCard } from '../ui/MagicCard';
+import { AnimatedBeam } from '../ui/AnimatedBeam';
 import { useCameraVolatileStore } from '../../store/cameraStore';
 
 export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate, onDetail, prefs, onTheater }) => {
@@ -15,6 +18,11 @@ export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate,
     const [isPlaying, setIsPlaying] = useState(false);
     const [isHalted, setIsHalted] = useState(true);
     
+    // refs for AnimatedBeam
+    const containerRef = useRef(null);
+    const sourceRef = useRef(null);
+    const monitorRef = useRef(null);
+
     // streamKey forces LiveStreamVideo to fully unmount+remount on each reconnect,
     // ensuring a fresh WebRTC PeerConnection and stall-monitor closure.
     const [streamKey, setStreamKey] = useState(0);
@@ -127,11 +135,14 @@ export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate,
     };
 
     return (
-        <div
-            ref={cardRef}
-            className={`flex flex-col ${prefs.monitoringMode ? 'rounded-md' : 'rounded-xl'} border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900/50 shadow-sm overflow-hidden group transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] animate-in fade-in slide-in-from-bottom-4 fill-mode-both`}
+        <MagicCard
+            className={cn(
+                "flex flex-col shadow-sm group transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] animate-in fade-in slide-in-from-bottom-4 fill-mode-both",
+                prefs.monitoringMode ? 'rounded-md' : 'rounded-xl'
+            )}
             style={{ animationDelay: `${index * 40}ms` }}
         >
+            <div ref={cardRef} className="flex flex-col w-full h-full">
             {/* Video Area */}
             <div ref={videoRef} className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
                 {status === 'connected' ? (
@@ -153,35 +164,30 @@ export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate,
 
                         {!isPlaying && !isHalted && (
                             /* ── Buffering state overlay (while connected but no frames yet) ── */
-                            <div className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/90 backdrop-blur-md z-20">
-                                <div className="absolute inset-0 flex items-center justify-center pointer-events-none transition-opacity duration-1000 opacity-30">
-                                    <svg className="w-full h-24" viewBox="0 0 200 50" preserveAspectRatio="none">
-                                        <path className="animate-[dash_1.5s_linear_infinite]" stroke="url(#sigGradBlue)" strokeWidth="1" fill="none" strokeDasharray="10 5" strokeDashoffset="0" d="M 0 25 Q 50 5 100 25 T 200 25" />
-                                        <defs>
-                                            <linearGradient id="sigGradBlue" x1="0%" y1="0%" x2="100%" y2="0%">
-                                                <stop offset="0%" stopColor="#3b82f6" stopOpacity="0" />
-                                                <stop offset="50%" stopColor="#60a5fa" stopOpacity="1" />
-                                                <stop offset="100%" stopColor="#3b82f6" stopOpacity="0" />
-                                            </linearGradient>
-                                        </defs>
-                                    </svg>
-                                </div>
+                            <div ref={containerRef} className="absolute inset-0 flex flex-col items-center justify-center bg-zinc-950/90 backdrop-blur-md z-20">
                                 <div className="absolute inset-0 bg-[linear-gradient(rgba(59,130,246,0.1)_1px,transparent_1px),linear-gradient(90deg,rgba(59,130,246,0.1)_1px,transparent_1px)] bg-[size:20px_20px] [mask-image:radial-gradient(ellipse_50%_50%_at_50%_50%,#000_10%,transparent_100%)] opacity-20 animate-pulse transition-all duration-1000"></div>
 
-                                <div className="flex items-center space-x-5 z-10 mb-4 transition-all duration-500">
-                                    <div className="relative">
-                                        <Video className="w-6 h-6 text-zinc-400 opacity-50" />
-                                        <div className="absolute inset-0 border-2 border-blue-400 rounded-full animate-ping opacity-30"></div>
+                                <div className="flex items-center space-x-12 z-10 mb-4 transition-all duration-500">
+                                    <div ref={sourceRef} className="p-2 bg-zinc-900 rounded-xl border border-zinc-800 shadow-xl relative">
+                                        <Video className="w-6 h-6 text-zinc-400 opacity-80" />
+                                        <div className="absolute inset-0 border-2 border-blue-400 rounded-xl animate-ping opacity-20"></div>
                                     </div>
-                                    <div className="flex space-x-1.5 w-16 justify-center">
-                                        <div className="w-1.5 h-1.5 bg-blue-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                                        <div className="w-1.5 h-1.5 bg-blue-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                                        <div className="w-1.5 h-1.5 bg-blue-300 rounded-full animate-bounce"></div>
+
+                                    <div ref={monitorRef} className="p-2 bg-zinc-900 rounded-xl border border-zinc-800 shadow-xl">
+                                        <Monitor className="w-6 h-6 text-blue-500 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
                                     </div>
-                                    <Monitor className="w-6 h-6 text-blue-500 drop-shadow-[0_0_8px_rgba(59,130,246,0.5)]" />
                                 </div>
+                                <AnimatedBeam 
+                                    containerRef={containerRef}
+                                    fromRef={sourceRef}
+                                    toRef={monitorRef}
+                                    duration={2}
+                                    pathColor="#3b82f6"
+                                    gradientStartColor="#60a5fa"
+                                    gradientEndColor="#3b82f6"
+                                />
                                 <div className="z-10 flex flex-col items-center transition-all duration-500">
-                                    <span className="text-xs font-bold text-blue-400 uppercase tracking-widest drop-shadow-md mb-1">
+                                    <span className="text-[10px] font-bold text-blue-400 uppercase tracking-[0.2em] drop-shadow-md mb-1 animate-pulse">
                                         RECEIVING VIDEO FRAME
                                     </span>
                                 </div>
@@ -262,15 +268,6 @@ export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate,
                                     {retryCount >= 5 && (
                                         <span className="text-[10px] text-red-400/50 mb-3 font-mono">Max retries reached</span>
                                     )}
-                                    <Button
-                                        variant="outline"
-                                        size="sm"
-                                        className="h-8 px-5 text-[10px] font-bold border-red-500/40 text-red-400 hover:bg-red-500/10 hover:text-red-300 bg-transparent transition-all rounded-full tracking-wider"
-                                        onClick={() => handleReconnect(true)}
-                                        disabled={isReconnecting}
-                                    >
-                                        <RefreshCw className={`w-3.5 h-3.5 mr-2 ${isReconnecting ? 'animate-spin' : ''}`} /> RECONNECT
-                                    </Button>
                                 </div>
                             </>
                         )}
@@ -323,34 +320,69 @@ export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate,
             </div>
 
             {/* Info Area */}
-            {(prefs.showName || prefs.showSource || prefs.showTags) && (
-                <div className="p-4 flex-1 flex flex-col justify-between">
-                    <div>
-                        {prefs.showName && (
-                            <div className="flex items-start justify-between">
-                                <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 truncate pr-2">{camera.name}</h3>
-                                <div className="flex items-center space-x-1">
-                                    {(status === 'disconnected' || status === 'reconnecting') && (
-                                        <Button variant="ghost" size="icon" className="h-7 w-7 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100" onClick={() => handleReconnect(true)} disabled={isReconnecting} title="Manual Reconnect">
-                                            <RefreshCw className={`w-4 h-4 ${isReconnecting ? 'animate-spin' : ''}`} />
-                                        </Button>
-                                    )}
-                                </div>
-                            </div>
-                        )}
-                        {prefs.showSource && (
-                            <p className={`text-xs text-zinc-500 truncate ${prefs.showName ? 'mt-1' : ''}`} title={camera.url}>{camera.url}</p>
-                        )}
-                        {prefs.showTags && camera.labels.length > 0 && (
-                            <div className={`flex flex-wrap gap-1 ${prefs.showName || prefs.showSource ? 'mt-3' : ''}`}>
-                                {camera.labels.map((lbl, idx) => (
-                                    <Badge key={idx} variant="secondary" className="text-[10px]">{lbl}</Badge>
-                                ))}
-                            </div>
-                        )}
-                    </div>
-                </div>
-            )}
+            <AnimatePresence mode="popLayout" initial={false}>
+                {(prefs.showName || prefs.showSource || prefs.showTags) && (
+                    <motion.div 
+                        initial={{ opacity: 0, height: 0 }}
+                        animate={{ opacity: 1, height: 'auto' }}
+                        exit={{ opacity: 0, height: 0 }}
+                        transition={{ duration: 0.3, ease: [0.16, 1, 0.3, 1] }}
+                        className="p-4 flex-1 flex flex-col justify-between overflow-hidden"
+                    >
+                        <div>
+                            <AnimatePresence mode="popLayout">
+                                {prefs.showName && (
+                                    <motion.div 
+                                        initial={{ opacity: 0, y: -5 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: -5 }}
+                                        className="flex items-start justify-between"
+                                    >
+                                        <h3 className="font-semibold text-zinc-900 dark:text-zinc-100 truncate pr-2">{camera.name}</h3>
+                                        <div className="flex items-center space-x-1">
+                                            {(status === 'disconnected' || status === 'reconnecting') && (
+                                                <Button variant="ghost" size="icon" className="h-7 w-7 text-zinc-500 hover:text-zinc-900 dark:text-zinc-400 dark:hover:text-zinc-100" onClick={() => handleReconnect(true)} disabled={isReconnecting} title="Manual Reconnect">
+                                                    <RefreshCw className={`w-4 h-4 ${isReconnecting ? 'animate-spin' : ''}`} />
+                                                </Button>
+                                            )}
+                                        </div>
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+
+                            <AnimatePresence mode="popLayout">
+                                {prefs.showSource && (
+                                    <motion.p 
+                                        initial={{ opacity: 0, y: -5 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: -5 }}
+                                        className={`text-xs text-zinc-500 truncate ${prefs.showName ? 'mt-1' : ''}`} 
+                                        title={camera.url}
+                                    >
+                                        {camera.url}
+                                    </motion.p>
+                                )}
+                            </AnimatePresence>
+
+                            <AnimatePresence mode="popLayout">
+                                {prefs.showTags && camera.labels.length > 0 && (
+                                    <motion.div 
+                                        initial={{ opacity: 0, y: -5 }}
+                                        animate={{ opacity: 1, y: 0 }}
+                                        exit={{ opacity: 0, y: -5 }}
+                                        className={`flex flex-wrap gap-1 ${prefs.showName || prefs.showSource ? 'mt-3' : ''}`}
+                                    >
+                                        {camera.labels.map((lbl, idx) => (
+                                            <Badge key={idx} variant="secondary" className="text-[10px]">{lbl}</Badge>
+                                        ))}
+                                    </motion.div>
+                                )}
+                            </AnimatePresence>
+                        </div>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
+        </MagicCard>
     );
 };

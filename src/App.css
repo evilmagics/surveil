@@ -1,5 +1,39 @@
 @import "tailwindcss";
+@import "@heroui/react/styles";
 @custom-variant dark (&:is(.dark *));
+
+@theme {
+  @keyframes grid {
+    0% {
+      transform: translateY(-50%);
+    }
+    100% {
+      transform: translateY(0);
+    }
+  }
+  @keyframes beam {
+    from {
+      stroke-dashoffset: 250;
+    }
+    to {
+      stroke-dashoffset: -250;
+    }
+  }
+  @keyframes gradient {
+    0% {
+      background-position: 0% 50%;
+    }
+    50% {
+      background-position: 100% 50%;
+    }
+    100% {
+      background-position: 0% 50%;
+    }
+  }
+  --animation-grid: grid 20s linear infinite;
+  --animation-beam: beam 2s linear infinite;
+  --animation-gradient: gradient 8s linear infinite;
+}
 
 @layer base {
   /* Modern Thin Scrollbar */
