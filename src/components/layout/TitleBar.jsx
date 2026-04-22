@@ -35,10 +35,9 @@ export function TitleBar() {
       data-tauri-drag-region 
       className="h-9 w-full flex items-center justify-between bg-white/80 dark:bg-zinc-950/80 backdrop-blur-xl border-b border-zinc-200/50 dark:border-zinc-800/30 select-none z-[100] transition-colors duration-500"
     >
-      {/* App Logo & Title */}
       <div className="flex items-center px-4 space-x-2.5 pointer-events-none">
-        <div className="w-4 h-4 bg-blue-600 rounded-sm flex items-center justify-center shadow-lg shadow-blue-500/20">
-          <Video className="w-2.5 h-2.5 text-white" strokeWidth={3} />
+        <div className="w-5 h-5 flex items-center justify-center">
+          <img src="/logo.png" alt="Surveil Logo" className="w-full h-full object-contain" />
         </div>
         <span className="text-[10px] font-black uppercase tracking-widest text-zinc-800 dark:text-zinc-200">
           Sur<span className="text-blue-500">veil</span>
