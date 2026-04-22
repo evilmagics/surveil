@@ -9,6 +9,8 @@ export function useCameras(prefs) {
     const [search, setSearch] = useState('');
     const [page, setPage] = useState(1);
     const [filterProtocol, setFilterProtocol] = useState('All');
+    const [filterCategory, setFilterCategory] = useState('all');
+    const [activeTags, setActiveTags] = useState([]); // Array of strings
     const [sortConfig, setSortConfig] = useState({ key: 'created_at', dir: 'desc' });
 
     const loadCameras = useCallback(async (showWindow = false) => {
@@ -41,25 +43,41 @@ export function useCameras(prefs) {
             result = result.filter(c => c.protocol && c.protocol.toUpperCase() === filterProtocol.toUpperCase());
         }
 
-        result.sort((a, b) => {
-            let valA = a[sortConfig.key];
-            let valB = b[sortConfig.key];
-            
-            if (sortConfig.key === 'created_at') {
-                valA = valA ? new Date(valA).getTime() : 0;
-                valB = valB ? new Date(valB).getTime() : 0;
-            } else {
-                valA = valA?.toString().toLowerCase() || '';
-                valB = valB?.toString().toLowerCase() || '';
-            }
+        if (filterCategory === 'favorites') {
+            result = result.filter(c => c.labels.some(l => 
+                l.toLowerCase() === 'favorite' || 
+                l.toLowerCase() === 'favorites' || 
+                l.toLowerCase() === 'star'
+            ));
+        }
 
-            if (valA < valB) return sortConfig.dir === 'asc' ? -1 : 1;
-            if (valA > valB) return sortConfig.dir === 'asc' ? 1 : -1;
-            return 0;
-        });
+        if (activeTags.length > 0) {
+            result = result.filter(c => 
+                activeTags.every(tag => c.labels.includes(tag))
+            );
+        }
+
+        if (sortConfig.key !== 'default') {
+            result.sort((a, b) => {
+                let valA = a[sortConfig.key];
+                let valB = b[sortConfig.key];
+                
+                if (sortConfig.key === 'created_at') {
+                    valA = valA ? new Date(valA).getTime() : 0;
+                    valB = valB ? new Date(valB).getTime() : 0;
+                } else {
+                    valA = valA?.toString().toLowerCase() || '';
+                    valB = valB?.toString().toLowerCase() || '';
+                }
+
+                if (valA < valB) return sortConfig.dir === 'asc' ? -1 : 1;
+                if (valA > valB) return sortConfig.dir === 'asc' ? 1 : -1;
+                return 0;
+            });
+        }
 
         return result;
-    }, [cameras, search, filterProtocol, sortConfig]);
+    }, [cameras, search, filterProtocol, filterCategory, sortConfig]);
 
     const paginatedCameras = useMemo(() => {
         const start = (page - 1) * prefs.itemsPerPage;
@@ -68,9 +86,13 @@ export function useCameras(prefs) {
 
     const totalPages = Math.ceil(filteredCameras.length / prefs.itemsPerPage);
 
-    const handleStateUpdate = useCallback((id, status) => {
-        invokeTauri('update_camera_state', { id, status }).catch(console.error);
-        updateCameraStatus(id, status);
+    const handleStateUpdate = useCallback((id, status, updatedCamera = null) => {
+        if (updatedCamera) {
+            setCameras(prev => prev.map(c => c.id === id ? updatedCamera : c));
+        } else {
+            invokeTauri('update_camera_state', { id, status }).catch(console.error);
+            updateCameraStatus(id, status);
+        }
     }, [updateCameraStatus]);
 
     const refresh = useCallback(() => loadCameras(false), [loadCameras]);
@@ -84,6 +106,10 @@ export function useCameras(prefs) {
         setPage,
         filterProtocol,
         setFilterProtocol,
+        filterCategory,
+        setFilterCategory,
+        activeTags,
+        setActiveTags,
         sortConfig,
         setSortConfig,
         filteredCameras,

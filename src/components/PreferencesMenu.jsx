@@ -9,10 +9,11 @@ export function PreferencesMenu({ prefs, setPrefs, setPage }) {
         <Popover placement="top-end" showArrow offset={20}>
             <Popover.Trigger>
                 <Button
+                    variant="ghost"
                     size="icon"
-                    className="h-10 w-10 !rounded-full shadow-lg bg-blue-600 text-white hover:bg-blue-700 active:scale-95 transition-all group"
+                    className="h-9 w-9 rounded-full text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 transition-colors"
                 >
-                    <Settings className="w-5 h-5 transition-transform duration-500 group-hover:rotate-90" />
+                    <Settings className="w-4 h-4" />
                 </Button>
             </Popover.Trigger>
             <Popover.Content className="p-0 border-none bg-transparent shadow-none">

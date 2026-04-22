@@ -19,6 +19,32 @@ fn show_main_window(window: Window) {
     window.show().unwrap();
 }
 
+#[tauri::command]
+fn set_theater_mode(window: Window, state: bool) {
+    if state {
+        // High-level window manipulation for Windows compatibility
+        // 1. Hide window first to 'detach' from OS snap/maximize state
+        let _ = window.hide();
+        let _ = window.set_fullscreen(false);
+        let _ = window.unmaximize();
+        
+        // 2. Kill frame while hidden
+        let _ = window.set_resizable(false);
+        let _ = window.set_decorations(false);
+        
+        // 3. Enter fullscreen and restore visibility
+        let _ = window.set_fullscreen(true);
+        let _ = window.show();
+        let _ = window.set_focus();
+    } else {
+        let _ = window.hide();
+        let _ = window.set_fullscreen(false);
+        let _ = window.set_decorations(true);
+        let _ = window.set_resizable(true);
+        let _ = window.show();
+    }
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tracing_subscriber::fmt::init();
@@ -50,6 +76,7 @@ pub fn run() {
             get_preferences,
             save_preferences,
             show_main_window,
+            set_theater_mode,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application");

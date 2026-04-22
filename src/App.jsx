@@ -1,15 +1,18 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import {
-    Video, Search, Plus, LayoutGrid, ChevronLeft, ChevronRight,
-    ArrowDownNarrowWide, ArrowUpNarrowWide, Loader2, Settings, Filter, X
+import { 
+    Search, Plus, LayoutGrid, ChevronLeft, ChevronRight,
+    ArrowDownNarrowWide, ArrowUpNarrowWide, Loader2, Settings, Filter, X,
+    ArrowUpDown, Monitor, Trash2, Edit, MoreVertical, Hash, Video
 } from 'lucide-react';
 
-import {
-    ButtonGroup,
-    Select,
-    ListBox
-} from '@heroui/react';
+import { 
+    Popover, 
+    PopoverTrigger, 
+    PopoverContent,
+    ScrollShadow,
+    Badge as HeroBadge
+} from "@heroui/react";
 import { ToastProvider } from '@heroui/react/toast';
 
 import { usePreferences } from './hooks/usePreferences';
@@ -26,6 +29,7 @@ import { CameraDetailsSidebar } from './components/CameraDetailsSidebar';
 import { AddCameraModal } from './components/AddCameraModal';
 import { EditCameraModal } from './components/EditCameraModal';
 import { ThemeToggle } from './components/ui/ThemeToggle';
+import { TitleBar } from './components/layout/TitleBar';
 import RetroGrid from './components/ui/RetroGrid';
 import { AnimatedGradientText } from './components/ui/AnimatedGradientText';
 import { invokeTauri } from './lib/utils';
@@ -33,10 +37,13 @@ import { invokeTauri } from './lib/utils';
 export default function App() {
     const { prefs, setPrefs, isLoadingPrefs } = usePreferences();
     const {
+        cameras,
         isLoading: isLoadingCameras,
         search, setSearch,
         page, setPage,
         filterProtocol, setFilterProtocol,
+        filterCategory, setFilterCategory,
+        activeTags, setActiveTags,
         sortConfig, setSortConfig,
         filteredCameras,
         paginatedCameras,
@@ -131,10 +138,35 @@ export default function App() {
         }
     };
 
+    // Extract unique tags for filtering
+    const allTags = React.useMemo(() => {
+        const tags = new Set();
+        const source = cameras || [];
+        source.forEach(cam => {
+            cam.labels.forEach(label => {
+                const l = label.toLowerCase();
+                if (!['favorite', 'favorites', 'star'].includes(l)) {
+                    tags.add(label);
+                }
+            });
+        });
+        return Array.from(tags).sort();
+    }, [cameras]);
+
+    const [tagSearch, setTagSearch] = useState('');
+    const filteredAllTags = allTags.filter(t => t.toLowerCase().includes(tagSearch.toLowerCase()));
+
+    const toggleTag = (tag) => {
+        setActiveTags(prev => 
+            prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]
+        );
+    };
+
     if (isLoadingPrefs || isLoadingCameras) return null;
 
     return (
         <div className="relative h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-50 font-sans selection:bg-blue-500/30 transition-colors duration-500 flex flex-col overflow-hidden">
+            {!theaterCamera && !prefs.monitoringMode && <TitleBar />}
             <ToastProvider placement="top end" />
             <RetroGrid className="z-0 opacity-40" />
 
@@ -172,46 +204,255 @@ export default function App() {
                     )}
                 </AnimatePresence>
 
-                {/* Navbar */}
-                <header className={`sticky top-0 z-30 bg-white/80 dark:bg-zinc-950/80 backdrop-blur-md border-zinc-200 dark:border-zinc-800 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden flex items-center ${prefs.monitoringMode ? 'h-0 opacity-0 border-b-0' : 'h-16 opacity-100 border-b'}`}>
-                    <div className="container mx-auto px-4 w-full flex items-center justify-between relative z-10">
-                        <div className="flex items-center space-x-3">
-                            <div className="w-8 h-8 bg-blue-600 rounded-lg flex items-center justify-center shadow-lg shadow-blue-900/20 transition-transform hover:scale-110">
-                                <Video className="w-5 h-5 text-white" />
+                {/* Navbar / Header */}
+                <header className={`sticky top-0 z-30 bg-white/60 dark:bg-zinc-950/60 backdrop-blur-xl border-zinc-200/50 dark:border-zinc-800/30 transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden flex items-center ${prefs.monitoringMode ? 'h-0 opacity-0 border-b-0' : 'h-14 opacity-100 border-b'}`}>
+                    <div className="container mx-auto px-6 w-full flex items-center justify-between relative z-10">                        {/* Left: Branding & Status */}
+                        <div className="flex-1 flex items-center gap-4 min-w-[200px]">
+                            <div className="flex flex-col">
+                                <h1 className="text-xs font-black uppercase tracking-[0.3em] text-zinc-900 dark:text-white leading-none">
+                                    Live Feeds
+                                </h1>
+                                <div className="flex items-center gap-2 mt-1.5">
+                                    <div className="relative flex items-center justify-center">
+                                        <div className="absolute w-1.5 h-1.5 bg-emerald-500 rounded-full animate-ping opacity-75" />
+                                        <div className="relative w-1 h-1 bg-emerald-500 rounded-full" />
+                                    </div>
+                                    <span className="text-[9px] font-bold uppercase tracking-widest text-zinc-400 dark:text-zinc-500 leading-none">
+                                        {filteredCameras.length} Online
+                                    </span>
+                                </div>
                             </div>
-                            <h1 className="text-xl font-bold tracking-tight">Sur<span className="text-blue-500">veil</span></h1>
                         </div>
 
-                        <div className="flex items-center gap-2">
-                            <div className="relative w-64 hidden lg:block mr-2">
-                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-zinc-500" />
+                        {/* Center Section: Unified Search */}
+                        <div className="flex-initial w-full max-w-lg mx-auto px-4">
+                            <div className="relative group">
+                                <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-400 group-focus-within:text-blue-500 transition-colors duration-300" />
                                 <Input
-                                    placeholder="Quick search..."
-                                    className="pl-9 h-10 bg-zinc-50 dark:bg-zinc-900/50 border-zinc-200 dark:border-zinc-800 focus:border-blue-500"
+                                    placeholder="Search system, protocol or tags..."
+                                    className="w-full pl-10 h-9 bg-zinc-100/50 dark:bg-zinc-900/40 border-transparent hover:bg-zinc-100 dark:hover:bg-zinc-900/60 focus:bg-white dark:focus:bg-zinc-900 focus:ring-2 focus:ring-blue-500/10 transition-all duration-300 rounded-full text-xs font-medium placeholder:text-zinc-500"
                                     value={search}
                                     onChange={(e) => { setSearch(e.target.value); setPage(1); }}
                                 />
+                                <div className="absolute right-3 top-1/2 -translate-y-1/2 flex items-center gap-1 opacity-0 group-focus-within:opacity-100 transition-opacity">
+                                    <kbd className="hidden sm:inline-block px-1.5 py-0.5 text-[9px] font-mono font-medium text-zinc-400 bg-zinc-100 dark:bg-zinc-800 border border-zinc-200 dark:border-zinc-700 rounded">ESC</kbd>
+                                </div>
+                            </div>
+                        </div>
+
+                        {/* Right Section: Action Groups */}
+                        <div className="flex-1 flex items-center justify-end gap-6 min-w-[200px]">
+                            
+                            {/* Group 1: View Controls (Refinement) */}
+                            <div className="flex items-center gap-1">
+                                {/* Unified Filter Hub */}
+                                <Popover placement="bottom-end" showArrow offset={10}>
+                                    <PopoverTrigger>
+                                        <Button 
+                                            variant="ghost" 
+                                            size="sm" 
+                                            className={`h-9 px-3 text-[10px] font-black uppercase tracking-wider gap-2 transition-all ${
+                                                (filterCategory !== 'all' || filterProtocol !== 'All' || activeTags.length > 0)
+                                                ? 'text-blue-600 bg-blue-50/50 dark:bg-blue-500/10' 
+                                                : 'text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200'
+                                            }`}
+                                        >
+                                            <Filter className="w-3.5 h-3.5" />
+                                            <span className="hidden lg:inline">Filter</span>
+                                            {(filterCategory !== 'all' || filterProtocol !== 'All' || activeTags.length > 0) && (
+                                                <span className="px-1.5 py-0.5 rounded-full bg-blue-500 text-white text-[8px] leading-none">
+                                                    {(filterCategory !== 'all' ? 1 : 0) + (filterProtocol !== 'All' ? 1 : 0) + activeTags.length}
+                                                </span>
+                                            )}
+                                        </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-[320px] p-0 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-2xl border border-zinc-200/50 dark:border-zinc-800/50 shadow-2xl">
+                                        <div className="p-4 flex flex-col gap-5">
+                                            {/* Section 1: Category */}
+                                            <div>
+                                                <label className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500 mb-2.5 block">Category</label>
+                                                <div className="flex gap-2">
+                                                    {[
+                                                        { id: 'all', label: 'All Feeds' },
+                                                        { id: 'favorites', label: 'Favorites' }
+                                                    ].map(cat => (
+                                                        <button
+                                                            key={cat.id}
+                                                            onClick={() => setFilterCategory(cat.id)}
+                                                            className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-all ${
+                                                                filterCategory === cat.id
+                                                                ? 'bg-zinc-900 dark:bg-zinc-100 text-zinc-100 dark:text-zinc-900 border-zinc-900 dark:border-zinc-100 shadow-md'
+                                                                : 'bg-transparent border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:border-zinc-300 dark:hover:border-zinc-700'
+                                                            }`}
+                                                        >
+                                                            {cat.label}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Section 2: Protocol */}
+                                            <div>
+                                                <label className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500 mb-2.5 block">Protocol</label>
+                                                <div className="flex gap-2">
+                                                    {['All', 'RTSP', 'HTTP'].map(proto => (
+                                                        <button
+                                                            key={proto}
+                                                            onClick={() => setFilterProtocol(proto)}
+                                                            className={`flex-1 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider border transition-all ${
+                                                                filterProtocol === proto
+                                                                ? 'bg-blue-500 text-white border-blue-500 shadow-lg shadow-blue-500/20'
+                                                                : 'bg-transparent border-zinc-200 dark:border-zinc-800 text-zinc-500 hover:border-zinc-300 dark:hover:border-zinc-700'
+                                                            }`}
+                                                        >
+                                                            {proto}
+                                                        </button>
+                                                    ))}
+                                                </div>
+                                            </div>
+
+                                            {/* Section 3: Tags */}
+                                            <div>
+                                                <div className="flex items-center justify-between mb-2.5">
+                                                    <label className="text-[9px] font-black uppercase tracking-[0.2em] text-zinc-400 dark:text-zinc-500 block">Tags</label>
+                                                    {activeTags.length > 0 && (
+                                                        <button 
+                                                            onClick={() => setActiveTags([])}
+                                                            className="text-[8px] font-bold uppercase text-red-500 hover:underline"
+                                                        >
+                                                            Clear Tags
+                                                        </button>
+                                                    )}
+                                                </div>
+                                                <Input
+                                                    size="sm"
+                                                    placeholder="Search tags..."
+                                                    value={tagSearch}
+                                                    onValueChange={setTagSearch}
+                                                    startContent={<Search className="w-3 h-3 text-zinc-400" />}
+                                                    className="mb-3 bg-zinc-50 dark:bg-zinc-900/50"
+                                                />
+                                                <ScrollShadow className="max-h-[180px] -mx-1 px-1">
+                                                    <div className="grid grid-cols-2 gap-1.5">
+                                                        {allTags.filter(t => t.toLowerCase().includes(tagSearch.toLowerCase())).map(tag => (
+                                                            <button
+                                                                key={tag}
+                                                                onClick={() => toggleTag(tag)}
+                                                                className={`flex items-center justify-between px-3 py-2 rounded-lg text-[10px] font-bold transition-all border ${
+                                                                    activeTags.includes(tag)
+                                                                    ? 'bg-zinc-900 dark:bg-zinc-100 text-zinc-100 dark:text-zinc-900 border-zinc-900 dark:border-zinc-100'
+                                                                    : 'bg-transparent text-zinc-500 border-transparent hover:bg-zinc-100 dark:hover:bg-zinc-900'
+                                                                }`}
+                                                            >
+                                                                <span>#{tag}</span>
+                                                                {activeTags.includes(tag) && <X className="w-2.5 h-2.5 opacity-50" />}
+                                                            </button>
+                                                        ))}
+                                                    </div>
+                                                </ScrollShadow>
+                                            </div>
+                                        </div>
+                                        {(filterCategory !== 'all' || filterProtocol !== 'All' || activeTags.length > 0) && (
+                                            <div className="p-3 border-t border-zinc-200/50 dark:border-zinc-800/50 bg-zinc-50/50 dark:bg-zinc-900/30">
+                                                <Button 
+                                                    fullWidth 
+                                                    size="sm" 
+                                                    variant="flat" 
+                                                    color="danger"
+                                                    className="h-8 text-[9px] font-black uppercase tracking-widest"
+                                                    onClick={() => {
+                                                        setFilterCategory('all');
+                                                        setFilterProtocol('All');
+                                                        setActiveTags([]);
+                                                    }}
+                                                >
+                                                    Reset All Filters
+                                                </Button>
+                                            </div>
+                                        )}
+                                    </PopoverContent>
+                                </Popover>
+
+                                {/* Sort Hub */}
+                                <Popover placement="bottom-end" showArrow offset={10}>
+                                    <PopoverTrigger>
+                                        <Button 
+                                            variant="ghost" 
+                                            size="sm" 
+                                            className="h-9 px-3 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-200 transition-all gap-2"
+                                        >
+                                            <ArrowUpDown className={`w-3.5 h-3.5 ${sortConfig.dir === 'desc' ? 'rotate-180' : ''} transition-transform duration-300`} />
+                                            <span className="text-[10px] font-black uppercase tracking-wider hidden lg:inline">
+                                                {sortConfig.key === 'created_at' ? 'Date' : sortConfig.key === 'name' ? 'Name' : 'Default'}
+                                            </span>
+                                        </Button>
+                                    </PopoverTrigger>
+                                    <PopoverContent className="w-[200px] p-2 bg-white/95 dark:bg-zinc-950/95 backdrop-blur-2xl border border-zinc-200/50 dark:border-zinc-800/50 shadow-2xl">
+                                        <div className="flex flex-col gap-1">
+                                            {[
+                                                { id: 'default', label: 'Default' },
+                                                { id: 'name', label: 'Name' },
+                                                { id: 'created_at', label: 'Created Time' }
+                                            ].map(opt => (
+                                                <button
+                                                    key={opt.id}
+                                                    onClick={() => setSortConfig(prev => ({ ...prev, key: opt.id }))}
+                                                    className={`flex items-center justify-between px-3 py-2 rounded-lg text-[10px] font-bold uppercase tracking-wider transition-all ${
+                                                        sortConfig.key === opt.id
+                                                        ? 'bg-zinc-900 dark:bg-zinc-100 text-zinc-100 dark:text-zinc-900'
+                                                        : 'hover:bg-zinc-100 dark:hover:bg-zinc-900 text-zinc-500'
+                                                    }`}
+                                                >
+                                                    {opt.label}
+                                                    {sortConfig.key === opt.id && (
+                                                        <button 
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                setSortConfig(prev => ({ ...prev, dir: prev.dir === 'asc' ? 'desc' : 'asc' }));
+                                                            }}
+                                                            className="p-1 hover:bg-zinc-500/20 rounded"
+                                                        >
+                                                            {sortConfig.dir === 'asc' ? <ArrowUpNarrowWide className="w-3 h-3" /> : <ArrowDownNarrowWide className="w-3 h-3" />}
+                                                        </button>
+                                                    )}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </PopoverContent>
+                                </Popover>
                             </div>
 
-                            <Button
-                                variant="ghost"
-                                size="icon"
-                                className="h-10 w-10 text-zinc-600 dark:text-zinc-400 hover:text-blue-500 hover:bg-blue-50 dark:hover:bg-blue-500/10 border-none shadow-none"
-                                onClick={cameraForm.openAdd}
-                                title="Add Camera"
-                            >
-                                <div className="relative">
-                                    <Video className="w-5 h-5" />
-                                    <Plus className="w-3.5 h-3.5 absolute -bottom-1 -right-1 bg-white dark:bg-zinc-950 rounded-full text-blue-500" strokeWidth={3} />
-                                </div>
-                            </Button>
+                            {/* Group 2: Primary Action (Creation) */}
+                            <div className="flex items-center">
+                                <Button
+                                    variant="ghost"
+                                    size="icon"
+                                    className="h-9 w-9 text-zinc-500 hover:text-zinc-900 dark:hover:text-zinc-100 rounded-full transition-all"
+                                    onClick={cameraForm.openAdd}
+                                    title="Add Camera"
+                                >
+                                    <div className="relative">
+                                        <Video className="w-4 h-4" />
+                                        <Plus className="absolute -right-1 -top-1 w-2.5 h-2.5 bg-white dark:bg-zinc-950 rounded-full stroke-[3px]" />
+                                    </div>
+                                </Button>
+                            </div>
 
-                            <div className="h-6 w-px bg-zinc-200 dark:bg-zinc-800 mx-1 hidden sm:block opacity-50"></div>
-
-                            <Button variant="ghost" size="icon" className="h-10 w-10 hidden sm:flex text-zinc-500 hover:text-blue-500 dark:text-zinc-400 dark:hover:text-blue-400 hover:bg-blue-50 dark:hover:bg-blue-500/10 border-none shadow-none" onClick={() => setPrefs(p => ({ ...p, monitoringMode: true }))} title="Monitoring Mode">
-                                <LayoutGrid className="w-5 h-5" />
-                            </Button>
+                            {/* Group 3: Utility (Configuration) */}
+                            <div className="flex items-center gap-1">
+                                <Button 
+                                    variant="ghost" 
+                                    size="icon" 
+                                    className="h-9 w-9 text-zinc-500 hover:text-blue-500 dark:text-zinc-400 dark:hover:text-blue-400 rounded-full transition-all" 
+                                    onClick={() => setPrefs(p => ({ ...p, monitoringMode: true }))} 
+                                    title="Monitoring Mode"
+                                >
+                                    <LayoutGrid className="w-4 h-4" />
+                                </Button>
+                                <PreferencesMenu prefs={prefs} setPrefs={setPrefs} setPage={setPage} />
+                            </div>
                         </div>
+
                     </div>
                 </header>
 
@@ -223,84 +464,9 @@ export default function App() {
                 >
 
                     {/* Main Content */}
-                    <main className={`container mx-auto flex flex-col transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${prefs.monitoringMode ? 'px-2 py-2' : 'px-4 py-8'}`}>
+                    <main className={`container mx-auto flex flex-col transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] ${prefs.monitoringMode ? 'px-2 py-2' : 'px-6 py-6'}`}>
+                        
 
-                        {/* Toolbar */}
-                        <div className={`transition-all duration-500 ease-[cubic-bezier(0.16,1,0.3,1)] overflow-hidden ${prefs.monitoringMode ? 'max-h-0 opacity-0 mb-0' : 'max-h-[200px] opacity-100 mb-6'}`}>
-                            <div className="relative w-full mb-6 md:hidden">
-                                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-zinc-500" />
-                                <Input
-                                    placeholder="Search tags or name..."
-                                    className="pl-9 bg-zinc-50 dark:bg-zinc-900/50"
-                                    value={search}
-                                    onChange={(e) => { setSearch(e.target.value); setPage(1); }}
-                                />
-                            </div>
-
-                            <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
-                                <h2 className="text-lg font-medium text-zinc-800 dark:text-zinc-200 whitespace-nowrap">
-                                    Camera List <span className="text-zinc-500 text-sm font-normal ml-2">({filteredCameras.length} sources)</span>
-                                </h2>
-
-                                <div className="flex flex-wrap items-center gap-3">
-                                    <Select
-                                        selectedKey={filterProtocol}
-                                        onSelectionChange={setFilterProtocol}
-                                        className="min-w-[150px]"
-                                    >
-                                        <Select.Trigger className="flex items-center justify-between h-10 px-3 bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl text-sm shadow-sm transition-all hover:border-blue-300 dark:hover:border-blue-900/50">
-                                            <div className="flex items-center gap-2">
-                                                <Filter className="w-3.5 h-3.5 text-zinc-400" />
-                                                <Select.Value />
-                                            </div>
-                                            <Select.Indicator />
-                                        </Select.Trigger>
-                                        <Select.Popover>
-                                            <ListBox className="p-1 outline-none bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl min-w-[160px] z-[100]">
-                                                <ListBox.Item id="All" className="px-3 py-2 text-sm rounded-lg hover:bg-blue-500 hover:text-white cursor-pointer outline-none">All Protocols</ListBox.Item>
-                                                <ListBox.Item id="RTSP" className="px-3 py-2 text-sm rounded-lg hover:bg-blue-500 hover:text-white cursor-pointer outline-none">RTSP Stream</ListBox.Item>
-                                                <ListBox.Item id="HTTP" className="px-3 py-2 text-sm rounded-lg hover:bg-blue-500 hover:text-white cursor-pointer outline-none">HTTP/WebHLS</ListBox.Item>
-                                            </ListBox>
-                                        </Select.Popover>
-                                    </Select>
-
-                                    <div className="flex items-center bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-sm p-1 h-10">
-                                        <Select
-                                            selectedKey={sortConfig.key}
-                                            onSelectionChange={(key) => setSortConfig(c => ({ ...c, key }))}
-                                            className="min-w-[100px]"
-                                        >
-                                            <Select.Trigger className="flex items-center gap-2 pl-2 pr-8 h-8 border-none bg-transparent hover:opacity-80 rounded-lg text-xs font-medium focus:ring-0">
-                                                <Select.Value className="pr-1" />
-                                                <Select.Indicator className="text-zinc-400 absolute right-2" />
-                                            </Select.Trigger>
-                                            <Select.Popover>
-                                                <ListBox className="p-1 outline-none bg-white dark:bg-zinc-950 border border-zinc-200 dark:border-zinc-800 rounded-xl shadow-2xl z-[100]">
-                                                    <ListBox.Item id="created_at" className="px-3 py-2 text-sm rounded-lg hover:bg-blue-500 hover:text-white cursor-pointer outline-none">Sort by Date</ListBox.Item>
-                                                    <ListBox.Item id="name" className="px-3 py-2 text-sm rounded-lg hover:bg-blue-500 hover:text-white cursor-pointer outline-none">Sort by Name</ListBox.Item>
-                                                </ListBox>
-                                            </Select.Popover>
-                                        </Select>
-
-                                        <div className="w-px h-4 bg-zinc-200 dark:bg-zinc-800 mx-1" />
-
-                                        <Button
-                                            variant="ghost"
-                                            size="icon"
-                                            className="h-8 w-8 rounded-lg group/sort-toggle"
-                                            onClick={() => setSortConfig(c => ({ ...c, dir: c.dir === 'asc' ? 'desc' : 'asc' }))}
-                                            title={`Sort ${sortConfig.dir === 'asc' ? 'Descending' : 'Ascending'}`}
-                                        >
-                                            {sortConfig.dir === 'asc' ? (
-                                                <ArrowUpNarrowWide className="w-4 h-4 text-blue-500 transition-transform group-active/sort-toggle:scale-90" />
-                                            ) : (
-                                                <ArrowDownNarrowWide className="w-4 h-4 text-blue-500 transition-transform group-active/sort-toggle:scale-90" />
-                                            )}
-                                        </Button>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
 
                         {/* Grid */}
                         {paginatedCameras.length > 0 ? (
@@ -386,10 +552,39 @@ export default function App() {
                     </div>
                 </Dialog>
 
-                <TheaterMode
-                    camera={theaterCamera}
-                    onClose={() => setTheaterCamera(null)}
-                />
+                <AnimatePresence>
+                    {theaterCamera && (
+                        <TheaterMode
+                            camera={theaterCamera}
+                            onClose={() => setTheaterCamera(null)}
+                            onDelete={() => {
+                                setDeletingCamera(theaterCamera);
+                                setIsDeleteModalOpen(true);
+                                setTheaterCamera(null);
+                            }}
+                            onEdit={() => {
+                                cameraForm.openEdit(theaterCamera);
+                                setTheaterCamera(null);
+                            }}
+                            onDetails={() => {
+                                setSelectedCameraDetails(theaterCamera);
+                                setTheaterCamera(null);
+                            }}
+                            onFavoriteToggle={() => {
+                                const isFav = theaterCamera.labels.some(l => ['favorite', 'favorites', 'star'].includes(l.toLowerCase()));
+                                let newLabels;
+                                if (isFav) {
+                                    newLabels = theaterCamera.labels.filter(l => !['favorite', 'favorites', 'star'].includes(l.toLowerCase()));
+                                } else {
+                                    newLabels = [...theaterCamera.labels, 'favorite'];
+                                }
+                                const updated = { ...theaterCamera, labels: newLabels };
+                                handleStateUpdate(theaterCamera.id, theaterCamera.status, updated);
+                                setTheaterCamera(updated); // Update local theater state too
+                            }}
+                        />
+                    )}
+                </AnimatePresence>
 
                 {showMonitorToast && (
                     <div className="fixed top-6 left-1/2 -translate-x-1/2 z-[70] bg-black/80 backdrop-blur-md text-white px-6 py-3 rounded-full shadow-2xl flex items-center animate-in fade-in slide-in-from-top-4 duration-300">
@@ -402,16 +597,6 @@ export default function App() {
                     isOpen={!!selectedCameraDetails}
                     onClose={() => setSelectedCameraDetails(null)}
                 />
-
-                {!prefs.monitoringMode && (
-                    <div className="fixed bottom-6 right-6 z-40">
-                        <PreferencesMenu
-                            prefs={prefs}
-                            setPrefs={setPrefs}
-                            setPage={setPage}
-                        />
-                    </div>
-                )}
         </div>
     );
 }
