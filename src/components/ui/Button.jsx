@@ -2,7 +2,7 @@ import React from 'react';
 import { Button as HeroButton } from '@heroui/react';
 import { cn } from '../../lib/utils';
 
-export const Button = ({ children, variant = 'solid', size = 'md', className = '', ...props }) => {
+export const Button = React.forwardRef(({ children, variant = 'solid', size = 'md', className = '', ...props }, ref) => {
     // Map existing variants to HeroUI variants if needed, or just pass through
     const variantMap = {
         default: 'solid',
@@ -19,6 +19,7 @@ export const Button = ({ children, variant = 'solid', size = 'md', className = '
 
     return (
         <HeroButton 
+            ref={ref}
             variant={variantMap[variant] || variant} 
             size={size === 'default' ? 'md' : size}
             color={colorMap[variant] || 'default'}
@@ -28,4 +29,6 @@ export const Button = ({ children, variant = 'solid', size = 'md', className = '
             {children}
         </HeroButton>
     );
-};
+});
+
+Button.displayName = 'Button';
