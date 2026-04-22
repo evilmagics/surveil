@@ -31,3 +31,11 @@ temp/
 
 # Tauri
 src-tauri/bin/
+src-tauri/*.sqlite3
+
+# Agents & Research
+.agents/
+heroui_exports.txt
+
+# Temporary files
+*.patch
