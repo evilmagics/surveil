@@ -240,53 +240,61 @@ export const CameraCard = ({ camera, index = 0, onEdit, onDelete, onStateUpdate,
                         </div>
 
                         {/* Top Right: Favorite Button */}
-                        <div className="absolute top-1.5 right-1.5 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button 
-                                onClick={toggleFavorite}
-                                className={cn(
-                                    "p-1.5 transition-all duration-300 hover:scale-110",
-                                    isFavorite ? "text-yellow-400 drop-shadow-[0_0_8px_rgba(234,179,8,0.5)]" : "text-white/60 hover:text-blue-500"
-                                )}
-                            >
-                                <Star className={cn("w-4 h-4", isFavorite && "fill-current")} />
-                            </button>
-                        </div>
+                        {!prefs.monitoringMode && (
+                            <div className="absolute top-1.5 right-1.5 z-10 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <button 
+                                    onClick={toggleFavorite}
+                                    className={cn(
+                                        "p-1.5 transition-all duration-300 hover:scale-110",
+                                        isFavorite ? "text-yellow-400 drop-shadow-[0_0_8px_rgba(234,179,8,0.5)]" : "text-white/60 hover:text-blue-500"
+                                    )}
+                                >
+                                    <Star className={cn("w-4 h-4", isFavorite && "fill-current")} />
+                                </button>
+                            </div>
+                        )}
 
                         {/* Bottom Center: Pause/Play Button */}
-                        <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all duration-300 z-20">
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setIsPaused(!isPaused); }}
-                                className="p-2 text-white/60 hover:text-blue-500 transition-colors duration-300"
-                            >
-                                {isPaused ? <Play className="w-5 h-5 fill-current" /> : <Pause className="w-5 h-5 fill-current" />}
-                            </button>
-                        </div>
+                        {!prefs.monitoringMode && (
+                            <div className="absolute bottom-1.5 left-1/2 -translate-x-1/2 opacity-0 group-hover:opacity-100 transition-all duration-300 z-20">
+                                <button
+                                    onClick={(e) => { e.stopPropagation(); setIsPaused(!isPaused); }}
+                                    className="p-2 text-white/60 hover:text-blue-500 transition-colors duration-300"
+                                >
+                                    {isPaused ? <Play className="w-5 h-5 fill-current" /> : <Pause className="w-5 h-5 fill-current" />}
+                                </button>
+                            </div>
+                        )}
 
                         {/* Bottom Left: Actions (Delete, Edit, Detail) */}
-                        <div className="absolute bottom-1 left-1 flex items-center space-x-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onDelete(camera); }} title="Delete Camera">
-                                <Trash2 className="w-4 h-4" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onEdit(camera); }} title="Edit Camera">
-                                <Edit className="w-4 h-4" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onDetail(camera); }} title="Detail Source">
-                                <Info className="w-4 h-4" />
-                            </Button>
-                        </div>
+                        {!prefs.monitoringMode && (
+                            <div className="absolute bottom-1 left-1 flex items-center space-x-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                                <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onDelete(camera); }} title="Delete Camera">
+                                    <Trash2 className="w-4 h-4" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onEdit(camera); }} title="Edit Camera">
+                                    <Trash2 className="w-4 h-4" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onDetail(camera); }} title="Detail Source">
+                                    <Info className="w-4 h-4" />
+                                </Button>
+                            </div>
+                        )}
 
                         {/* Bottom Right: Utility Actions */}
-                        <div className="absolute bottom-1 right-1 flex items-center space-x-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-20">
-                            <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); handleReconnect(true); }} disabled={isReconnecting} title="Reload Stream">
-                                <RefreshCw className={`w-4 h-4 ${isReconnecting ? 'animate-spin text-blue-500' : ''}`} />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onTheater(camera); }} title="Theater Mode">
-                                <Monitor className="w-4 h-4" />
-                            </Button>
-                            <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={handleFullscreen} title="Fullscreen">
-                                <Maximize className="w-4 h-4" />
-                            </Button>
-                        </div>
+                        {!prefs.monitoringMode && (
+                            <div className="absolute bottom-1 right-1 flex items-center space-x-0.5 opacity-0 group-hover:opacity-100 transition-opacity z-20">
+                                <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); handleReconnect(true); }} disabled={isReconnecting} title="Reload Stream">
+                                    <RefreshCw className={`w-4 h-4 ${isReconnecting ? 'animate-spin text-blue-500' : ''}`} />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={(e) => { e.stopPropagation(); onTheater(camera); }} title="Theater Mode">
+                                    <Monitor className="w-4 h-4" />
+                                </Button>
+                                <Button variant="ghost" size="icon" className="h-8 w-8 !bg-transparent text-white/60 hover:text-blue-500 border-none shadow-none transition-colors" onClick={handleFullscreen} title="Fullscreen">
+                                    <Maximize className="w-4 h-4" />
+                                </Button>
+                            </div>
+                        )}
                     </>
                 ) : (
                     /* ── Offline / Reconnecting overlay ─────────────────────────────── */

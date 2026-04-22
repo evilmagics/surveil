@@ -33,6 +33,7 @@ import { TitleBar } from './components/layout/TitleBar';
 import RetroGrid from './components/ui/RetroGrid';
 import { AnimatedGradientText } from './components/ui/AnimatedGradientText';
 import { invokeTauri } from './lib/utils';
+import { getCurrentWindow } from '@tauri-apps/api/window';
 
 export default function App() {
     const { prefs, setPrefs, isLoadingPrefs } = usePreferences();
@@ -104,6 +105,19 @@ export default function App() {
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
     }, [prefs.monitoringMode, setPrefs]);
+
+    // Handle Native Fullscreen for Monitoring Mode
+    useEffect(() => {
+        const toggleFullscreen = async () => {
+            try {
+                const win = getCurrentWindow();
+                await win.setFullscreen(prefs.monitoringMode);
+            } catch (e) {
+                console.error("Failed to toggle fullscreen:", e);
+            }
+        };
+        toggleFullscreen();
+    }, [prefs.monitoringMode]);
 
     // Monitoring Mode Toast
     useEffect(() => {
